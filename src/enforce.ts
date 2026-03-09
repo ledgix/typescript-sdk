@@ -14,6 +14,16 @@ export interface VaultEnforceOptions {
     policyId?: string;
     /** Additional context for the clearance request. */
     context?: Record<string, unknown>;
+    /**
+     * Custom argument extractor for populating `toolArgs` from the function's
+     * positional arguments. Use this when the default introspection-based
+     * extraction is unreliable — for example in minified bundles where
+     * parameter names are mangled.
+     *
+     * @param args - The positional arguments passed to the wrapped function.
+     * @returns A plain object mapping argument names to values.
+     */
+    argsExtractor?: (args: unknown[]) => Record<string, unknown>;
 }
 
 /**
@@ -43,7 +53,9 @@ export function vaultEnforce(
         const resolvedName = options?.toolName ?? fn.name ?? "unknown_tool";
 
         const wrapper = async (...args: TArgs): Promise<TReturn> => {
-            const toolArgs = _extractToolArgs(fn, args);
+            const toolArgs = options?.argsExtractor
+                ? options.argsExtractor([...args])
+                : _extractToolArgs(fn, args);
             const ctx: Record<string, unknown> = { ...options?.context };
             if (options?.policyId) {
                 ctx.policy_id = options.policyId;
@@ -121,24 +133,37 @@ export async function withVaultContext<T>(
 }
 
 /**
- * Best-effort extraction of function arguments as a dict for the clearance request.
+ * Best-effort extraction of named function parameters for the clearance request.
+ *
+ * Handles regular functions, async functions, and arrow functions (both parens
+ * and single-param shorthand). Skips rest params (`...x`), destructured params
+ * (`{ a, b }`), and private params (prefixed with `_`).
+ *
+ * Note: relies on non-minified source. For minified builds, supply an explicit
+ * `argsExtractor` via {@link VaultEnforceOptions}.
  */
 function _extractToolArgs(fn: Function, args: unknown[]): Record<string, unknown> {
     try {
-        // Parse function parameter names from the function's string representation
         const fnStr = fn.toString();
-        const paramMatch = fnStr.match(/\(([^)]*)\)/);
-        if (!paramMatch) return {};
 
-        const params = paramMatch[1]
+        // Match parameter list from various syntaxes:
+        //   function name(a, b)  /  async function(a, b)  /  (a, b) =>  /  async (a, b) =>
+        const withParens = fnStr.match(/^[^(]*\(([^)]*)\)/);
+        //   Single-param arrow without parens:  a =>  /  async a =>
+        const withoutParens = fnStr.match(/^(?:async\s+)?(\w+)\s*=>/);
+
+        const paramsStr = withParens?.[1] ?? withoutParens?.[1] ?? null;
+        if (paramsStr === null || paramsStr.trim() === "") return {};
+
+        const params = paramsStr
             .split(",")
             .map((p) => p.trim())
-            .filter((p) => p && !p.startsWith("_") && !p.startsWith("..."));
+            .filter((p) => p && !p.startsWith("...") && !p.startsWith("{"));
 
         const result: Record<string, unknown> = {};
         for (let i = 0; i < Math.min(params.length, args.length); i++) {
-            // Remove type annotations and default values for the param name
-            const paramName = params[i].split(":")[0].split("=")[0].split("?")[0].trim();
+            // Strip TS type annotation, optional marker, and default value
+            const paramName = params[i].split(":")[0].split("?")[0].split("=")[0].trim();
             if (paramName && !paramName.startsWith("_")) {
                 result[paramName] = args[i];
             }

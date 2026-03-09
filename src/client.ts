@@ -62,25 +62,52 @@ export class LedgixClient {
         return headers;
     }
 
+    private static readonly _retryableStatuses = new Set([429, 500, 502, 503, 504]);
+
+    private _backoffDelay(attempt: number): number {
+        /** Exponential backoff with full jitter, capped at 30 seconds. */
+        const delay = Math.min(30_000, this.config.retryBaseDelay * 2 ** attempt);
+        return Math.random() * delay;
+    }
+
     private async _fetch(path: string, init?: RequestInit): Promise<Response> {
         const url = `${this.config.vaultUrl}${path}`;
-        try {
-            const response = await fetch(url, {
-                ...init,
-                headers: { ...this._headers(), ...init?.headers },
-                signal: AbortSignal.timeout(this.config.vaultTimeout),
-            });
-            return response;
-        } catch (error: unknown) {
-            if (error instanceof TypeError || (error instanceof DOMException && error.name === "AbortError")) {
-                throw new VaultConnectionError(
-                    error instanceof DOMException
-                        ? `Request timed out after ${this.config.vaultTimeout}ms`
-                        : String(error),
-                );
+        let lastError: VaultConnectionError | null = null;
+
+        for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
+            let response: Response;
+            try {
+                response = await fetch(url, {
+                    ...init,
+                    headers: { ...this._headers(), ...init?.headers },
+                    signal: AbortSignal.timeout(this.config.vaultTimeout),
+                });
+            } catch (error: unknown) {
+                const isTimeout = error instanceof DOMException && error.name === "AbortError";
+                const message = isTimeout
+                    ? `Request timed out after ${this.config.vaultTimeout}ms`
+                    : String(error);
+                lastError = new VaultConnectionError(message);
+                if (attempt < this.config.maxRetries) {
+                    await new Promise<void>((resolve) =>
+                        setTimeout(resolve, this._backoffDelay(attempt)),
+                    );
+                    continue;
+                }
+                throw lastError;
             }
-            throw new VaultConnectionError(String(error));
+
+            if (LedgixClient._retryableStatuses.has(response.status) && attempt < this.config.maxRetries) {
+                await new Promise<void>((resolve) =>
+                    setTimeout(resolve, this._backoffDelay(attempt)),
+                );
+                continue;
+            }
+
+            return response;
         }
+
+        throw lastError ?? new VaultConnectionError("Max retries exceeded");
     }
 
     // ------------------------------------------------------------------

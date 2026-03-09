@@ -78,6 +78,7 @@ export const testVaultConfig: Partial<VaultConfig> = {
     jwtAudience: "ledgix-sdk",
     agentId: "test-agent",
     sessionId: "test-session",
+    maxRetries: 0,
 };
 
 export const testVaultConfigWithJwt: Partial<VaultConfig> = {
@@ -87,6 +88,11 @@ export const testVaultConfigWithJwt: Partial<VaultConfig> = {
 
 export function createTestClient(overrides?: Partial<VaultConfig>): LedgixClient {
     return new LedgixClient({ ...testVaultConfig, ...overrides });
+}
+
+/** Client with retries enabled and zero backoff for fast retry tests. */
+export function createRetryTestClient(maxRetries = 2): LedgixClient {
+    return new LedgixClient({ ...testVaultConfig, maxRetries, retryBaseDelay: 0 });
 }
 
 // ──────────────────────────────────────────────────────────────────────

@@ -28,6 +28,10 @@ export interface VaultConfig {
     reviewPollInterval: number;
     /** Maximum time to wait for a manual review in milliseconds. Env: LEDGIX_REVIEW_TIMEOUT */
     reviewTimeout: number;
+    /** Maximum number of retry attempts for transient failures (connection errors, 5xx). Env: LEDGIX_MAX_RETRIES */
+    maxRetries: number;
+    /** Base delay in milliseconds for exponential backoff between retries (full jitter applied). Env: LEDGIX_RETRY_BASE_DELAY */
+    retryBaseDelay: number;
 }
 
 /**
@@ -49,6 +53,8 @@ export function createVaultConfig(overrides?: Partial<VaultConfig>): VaultConfig
         sessionId: overrides?.sessionId ?? env.LEDGIX_SESSION_ID ?? "",
         reviewPollInterval: overrides?.reviewPollInterval ?? parseTimeout(env.LEDGIX_REVIEW_POLL_INTERVAL) ?? 2000,
         reviewTimeout: overrides?.reviewTimeout ?? parseTimeout(env.LEDGIX_REVIEW_TIMEOUT) ?? 300000,
+        maxRetries: overrides?.maxRetries ?? parseTimeout(env.LEDGIX_MAX_RETRIES) ?? 3,
+        retryBaseDelay: overrides?.retryBaseDelay ?? parseTimeout(env.LEDGIX_RETRY_BASE_DELAY) ?? 500,
     };
 }
 

@@ -15,6 +15,7 @@ import {
     approvedResponse,
     buildJwksResponse,
     createExpiredJwt,
+    createRetryTestClient,
     createSampleJwt,
     createTestClient,
     deniedResponse,
@@ -376,6 +377,111 @@ describe("LedgixClient token verification", () => {
 
         const result = await clientWithJwt.requestClearance(request);
         expect(result.approved).toBe(true);
+    });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// Retry behaviour
+// ──────────────────────────────────────────────────────────────────────
+
+describe("LedgixClient retry", () => {
+    let keys: TestKeys;
+    let sampleToken: string;
+
+    beforeEach(async () => {
+        keys = await generateTestKeys();
+        sampleToken = await createSampleJwt(keys.privateKey);
+    });
+
+    it("should retry on network error and succeed", async () => {
+        const client = createRetryTestClient(2);
+        let callCount = 0;
+
+        server.use(
+            http.post("https://vault.test/request-clearance", () => {
+                callCount++;
+                if (callCount < 3) return HttpResponse.error();
+                return HttpResponse.json(approvedResponse(sampleToken));
+            }),
+        );
+
+        const request: ClearanceRequest = {
+            toolName: "stripe_refund",
+            toolArgs: { amount: 45 },
+            agentId: "test-agent",
+            sessionId: "",
+            context: {},
+        };
+
+        const result = await client.requestClearance(request);
+        expect(result.approved).toBe(true);
+        expect(callCount).toBe(3);
+    });
+
+    it("should retry on 503 and succeed", async () => {
+        const client = createRetryTestClient(2);
+        let callCount = 0;
+
+        server.use(
+            http.post("https://vault.test/request-clearance", () => {
+                callCount++;
+                if (callCount < 2) return new HttpResponse("Service Unavailable", { status: 503 });
+                return HttpResponse.json(approvedResponse(sampleToken));
+            }),
+        );
+
+        const request: ClearanceRequest = {
+            toolName: "stripe_refund",
+            toolArgs: { amount: 45 },
+            agentId: "test-agent",
+            sessionId: "",
+            context: {},
+        };
+
+        const result = await client.requestClearance(request);
+        expect(result.approved).toBe(true);
+        expect(callCount).toBe(2);
+    });
+
+    it("should throw VaultConnectionError after exhausting retries", async () => {
+        const client = createRetryTestClient(2);
+
+        server.use(
+            http.post("https://vault.test/request-clearance", () => HttpResponse.error()),
+        );
+
+        const request: ClearanceRequest = {
+            toolName: "stripe_refund",
+            toolArgs: {},
+            agentId: "test-agent",
+            sessionId: "",
+            context: {},
+        };
+
+        await expect(client.requestClearance(request)).rejects.toThrow(VaultConnectionError);
+    });
+
+    it("should not retry on 400", async () => {
+        const client = createRetryTestClient(2);
+        let callCount = 0;
+
+        server.use(
+            http.post("https://vault.test/request-clearance", () => {
+                callCount++;
+                return new HttpResponse("Bad Request", { status: 400 });
+            }),
+        );
+
+        const request: ClearanceRequest = {
+            toolName: "stripe_refund",
+            toolArgs: {},
+            agentId: "test-agent",
+            sessionId: "",
+            context: {},
+        };
+
+        await expect(client.requestClearance(request)).rejects.toThrow(VaultConnectionError);
+        expect(callCount).toBe(1);
     });
 });
 

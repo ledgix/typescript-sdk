@@ -148,6 +148,30 @@ describe("vaultEnforce", () => {
         const context = capturedBody.context as Record<string, unknown>;
         expect(context.policy_id).toBe("refund-policy");
     });
+
+    it("should use argsExtractor when provided", async () => {
+        let capturedBody: Record<string, unknown> = {};
+
+        server.use(
+            http.post("https://vault.test/request-clearance", async ({ request }) => {
+                capturedBody = (await request.json()) as Record<string, unknown>;
+                return HttpResponse.json(approvedResponse(sampleToken));
+            }),
+        );
+
+        const processRefund = vaultEnforce(client, {
+            toolName: "refund",
+            argsExtractor: ([amount, reason]) => ({ amount, reason }),
+        })(async (amount: number, reason: string, _clearance?: ClearanceResponse) => {
+            return "done";
+        });
+
+        await processRefund(99.99, "late delivery");
+
+        const toolArgs = capturedBody.tool_args as Record<string, unknown>;
+        expect(toolArgs.amount).toBe(99.99);
+        expect(toolArgs.reason).toBe("late delivery");
+    });
 });
 
 // ──────────────────────────────────────────────────────────────────────
