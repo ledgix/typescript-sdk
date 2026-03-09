@@ -1,0 +1,105 @@
+{
+  "name": "ledgix-ts",
+  "version": "0.1.1",
+  "description": "Ledgix ALCV — TypeScript SDK for SOX 404 compliance enforcement on AI agent tool calls",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./adapters/langchain": {
+      "import": {
+        "types": "./dist/adapters/langchain.d.mts",
+        "default": "./dist/adapters/langchain.mjs"
+      },
+      "require": {
+        "types": "./dist/adapters/langchain.d.cts",
+        "default": "./dist/adapters/langchain.cjs"
+      }
+    },
+    "./adapters/llamaindex": {
+      "import": {
+        "types": "./dist/adapters/llamaindex.d.mts",
+        "default": "./dist/adapters/llamaindex.mjs"
+      },
+      "require": {
+        "types": "./dist/adapters/llamaindex.d.cts",
+        "default": "./dist/adapters/llamaindex.cjs"
+      }
+    },
+    "./adapters/vercel-ai": {
+      "import": {
+        "types": "./dist/adapters/vercel-ai.d.mts",
+        "default": "./dist/adapters/vercel-ai.mjs"
+      },
+      "require": {
+        "types": "./dist/adapters/vercel-ai.d.cts",
+        "default": "./dist/adapters/vercel-ai.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "jose": "^6.0.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.5",
+    "@vitest/coverage-v8": "^3.0.0",
+    "msw": "^2.7.0",
+    "tsup": "^8.4.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "peerDependencies": {
+    "@langchain/core": ">=0.2.0",
+    "ai": ">=3.0.0",
+    "llamaindex": ">=0.5.0"
+  },
+  "peerDependenciesMeta": {
+    "@langchain/core": {
+      "optional": true
+    },
+    "llamaindex": {
+      "optional": true
+    },
+    "ai": {
+      "optional": true
+    }
+  },
+  "keywords": [
+    "ledgix",
+    "alcv",
+    "compliance",
+    "sox",
+    "ai-agent",
+    "jwt",
+    "vault",
+    "langchain",
+    "llamaindex",
+    "vercel-ai"
+  ]
+}
