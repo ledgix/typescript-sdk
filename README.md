@@ -1,5 +1,8 @@
 # ledgix-ts
 
+[![npm](https://img.shields.io/badge/npm-v0.1.2-red)](https://www.npmjs.com/package/ledgix-ts)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 **Ledgix ALCV** — TypeScript SDK for SOX 404 compliance enforcement on AI agent tool calls.
 
 The SDK acts as a **shim** that intercepts AI agent tool calls, sends clearance requests to an **ALCV Vault** server, and only allows execution if the Vault approves and returns a signed **A-JWT** (Agentic JSON Web Token, Ed25519/EdDSA).
