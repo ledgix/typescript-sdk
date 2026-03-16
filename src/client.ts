@@ -15,11 +15,17 @@ import {
 import type {
     ClearanceRequest,
     ClearanceResponse,
+    LedgerEntry,
+    LedgerManifest,
+    LedgerVerificationResult,
     PolicyRegistration,
     PolicyRegistrationResponse,
 } from "./models.js";
 import {
     ClearanceResponseSchema,
+    LedgerEntrySchema,
+    LedgerManifestSchema,
+    LedgerVerificationResultSchema,
     PolicyRegistrationResponseSchema,
     toCamelCaseKeys,
     toSnakeCaseKeys,
@@ -275,6 +281,133 @@ export class LedgixClient {
         }
     }
 
+    async fetchLedger(limit = 100): Promise<LedgerEntry[]> {
+        const response = await this._fetch(`/ledger?limit=${encodeURIComponent(String(limit))}`);
+
+        if (!response.ok) {
+            throw new VaultConnectionError(`Failed to fetch ledger: HTTP ${response.status}`);
+        }
+
+        const data = toCamelCaseKeys((await response.json()) as Record<string, unknown>);
+        const entries = Array.isArray(data.entries) ? data.entries : [];
+        return entries.map((entry) => LedgerEntrySchema.parse(entry));
+    }
+
+    async fetchLedgerManifests(limit = 24): Promise<LedgerManifest[]> {
+        const response = await this._fetch(`/ledger/manifests?limit=${encodeURIComponent(String(limit))}`);
+
+        if (!response.ok) {
+            throw new VaultConnectionError(`Failed to fetch ledger manifests: HTTP ${response.status}`);
+        }
+
+        const data = toCamelCaseKeys((await response.json()) as Record<string, unknown>);
+        const manifests = Array.isArray(data.manifests) ? data.manifests : [];
+        return manifests.map((manifest) => LedgerManifestSchema.parse(manifest));
+    }
+
+    async verifyLedgerProof(entries: LedgerEntry[], manifests: LedgerManifest[] = []): Promise<LedgerVerificationResult> {
+        if (!this._jwksCache) {
+            await this.fetchJwks();
+        }
+
+        if (!this._jwksCache) {
+            throw new TokenVerificationError("No JWKS available from Vault");
+        }
+
+        const jwks = this._jwksCache as { keys?: Record<string, unknown>[] };
+        if (!jwks.keys || jwks.keys.length === 0) {
+            throw new TokenVerificationError("JWKS contains no keys");
+        }
+
+        const keyCache = new Map<string, CryptoKey>();
+        const keyForKid = async (kid: string): Promise<CryptoKey> => {
+            if (keyCache.has(kid)) {
+                return keyCache.get(kid)!;
+            }
+
+            const jwk = jwks.keys!.find((item) => item.kid === kid);
+            if (!jwk) {
+                throw new TokenVerificationError(`No JWKS key found for kid ${kid}`);
+            }
+
+            const imported = await jose.importJWK(jwk as jose.JWK, "EdDSA");
+            keyCache.set(kid, imported as CryptoKey);
+            return imported as CryptoKey;
+        };
+
+        const sortedEntries = [...entries].sort((a, b) => a.seq - b.seq);
+        let previousRowHash = "0000000000000000000000000000000000000000000000000000000000000000";
+
+        for (const entry of sortedEntries) {
+            if (entry.prevRowHash !== previousRowHash) {
+                throw new TokenVerificationError(`Ledger chain broken at seq ${entry.seq}`);
+            }
+            if (entry.signatureAlgorithm !== "Ed25519") {
+                throw new TokenVerificationError(`Unsupported ledger signature algorithm ${entry.signatureAlgorithm}`);
+            }
+
+            const payloadBytes = decodeBase64Url(entry.receiptPayload);
+            const signatureBytes = decodeBase64Url(entry.rowSignature);
+            const key = await keyForKid(entry.signerKeyId);
+            const verified = await crypto.subtle.verify("Ed25519", key, signatureBytes, payloadBytes);
+            if (!verified) {
+                throw new TokenVerificationError(`Ledger receipt signature invalid at seq ${entry.seq}`);
+            }
+
+            const payload = JSON.parse(new TextDecoder().decode(payloadBytes)) as Record<string, unknown>;
+            if (payload.row_hash !== entry.rowHash || payload.prev_row_hash !== entry.prevRowHash || payload.seq !== entry.seq) {
+                throw new TokenVerificationError(`Ledger receipt payload mismatch at seq ${entry.seq}`);
+            }
+
+            previousRowHash = entry.rowHash;
+        }
+
+        const sortedManifests = [...manifests].sort(
+            (a, b) => new Date(a.periodStart).getTime() - new Date(b.periodStart).getTime(),
+        );
+        let previousManifestHash = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+
+        for (const manifest of sortedManifests) {
+            if (manifest.prevManifestHash !== previousManifestHash) {
+                throw new TokenVerificationError(`Ledger manifest chain broken at period ${manifest.periodStart}`);
+            }
+            if (manifest.signatureAlgorithm !== "Ed25519") {
+                throw new TokenVerificationError(`Unsupported manifest signature algorithm ${manifest.signatureAlgorithm}`);
+            }
+
+            const payloadBytes = decodeBase64Url(manifest.manifestPayload);
+            const manifestHash = await sha256Hex(payloadBytes);
+            if (`sha256:${manifestHash}` !== manifest.manifestHash) {
+                throw new TokenVerificationError(`Ledger manifest hash mismatch for period ${manifest.periodStart}`);
+            }
+
+            const signatureBytes = decodeBase64Url(manifest.manifestSignature);
+            const key = await keyForKid(manifest.signerKeyId);
+            const verified = await crypto.subtle.verify("Ed25519", key, signatureBytes, payloadBytes);
+            if (!verified) {
+                throw new TokenVerificationError(`Ledger manifest signature invalid for period ${manifest.periodStart}`);
+            }
+
+            previousManifestHash = manifest.manifestHash;
+        }
+
+        if (sortedEntries.length > 0 && sortedManifests.length > 0) {
+            const latestEntry = sortedEntries[sortedEntries.length - 1];
+            const latestManifest = sortedManifests[sortedManifests.length - 1];
+            if (latestManifest.headSeq < latestEntry.seq) {
+                throw new TokenVerificationError("Latest manifest trails the latest ledger entry");
+            }
+        }
+
+        return LedgerVerificationResultSchema.parse({
+            intact: true,
+            verifiedEntries: sortedEntries.length,
+            verifiedManifests: sortedManifests.length,
+            latestRowHash: sortedEntries.length ? sortedEntries[sortedEntries.length - 1].rowHash : null,
+            latestManifestHash: sortedManifests.length ? sortedManifests[sortedManifests.length - 1].manifestHash : null,
+        });
+    }
+
     // ------------------------------------------------------------------
     // Lifecycle
     // ------------------------------------------------------------------
@@ -287,4 +420,22 @@ export class LedgixClient {
         // Native fetch has no persistent connection pool to close.
         // This method exists for API parity with the Python SDK.
     }
+}
+
+function decodeBase64Url(value: string): Uint8Array {
+    const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized + "=".repeat((4 - (normalized.length % 4 || 4)) % 4);
+    const binary = atob(padded);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+    }
+    return bytes;
+}
+
+async function sha256Hex(value: Uint8Array): Promise<string> {
+    const digest = await crypto.subtle.digest("SHA-256", value);
+    return Array.from(new Uint8Array(digest))
+        .map((item) => item.toString(16).padStart(2, "0"))
+        .join("");
 }

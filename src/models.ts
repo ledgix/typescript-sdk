@@ -60,6 +60,53 @@ export const PolicyRegistrationResponseSchema = z.object({
     message: z.string().default("").describe("Additional information"),
 });
 
+export const LedgerEntrySchema = z.object({
+    seq: z.number(),
+    requestId: z.string(),
+    agentId: z.string(),
+    policyId: z.string(),
+    intentHash: z.string().default(""),
+    toolName: z.string(),
+    toolArgs: z.record(z.unknown()).default({}),
+    reason: z.string().default(""),
+    citations: z.array(z.record(z.unknown())).default([]),
+    evidenceChunks: z.array(z.record(z.unknown())).default([]),
+    confidence: z.number().default(0),
+    approved: z.boolean(),
+    decidedAt: z.string(),
+    prevRowHash: z.string().default(""),
+    rowHash: z.string(),
+    signatureAlgorithm: z.string().default(""),
+    signerKeyId: z.string().default(""),
+    rowSignature: z.string().default(""),
+    receiptPayload: z.string().default(""),
+});
+
+export const LedgerManifestSchema = z.object({
+    periodStart: z.string(),
+    periodEndExclusive: z.string(),
+    generatedAt: z.string(),
+    headSeq: z.number(),
+    headRowHash: z.string(),
+    headRowSignature: z.string().default(""),
+    manifestHash: z.string(),
+    prevManifestHash: z.string().default(""),
+    signatureAlgorithm: z.string().default(""),
+    signerKeyId: z.string().default(""),
+    manifestSignature: z.string().default(""),
+    manifestPayload: z.string().default(""),
+    anchorUri: z.string().default(""),
+    anchoredAt: z.string().optional(),
+});
+
+export const LedgerVerificationResultSchema = z.object({
+    intact: z.boolean(),
+    verifiedEntries: z.number().int().nonnegative(),
+    verifiedManifests: z.number().int().nonnegative(),
+    latestRowHash: z.string().nullable(),
+    latestManifestHash: z.string().nullable(),
+});
+
 // ──────────────────────────────────────────────────────────────────────
 // TypeScript Types (inferred from Zod)
 // ──────────────────────────────────────────────────────────────────────
@@ -68,6 +115,9 @@ export type ClearanceRequest = z.infer<typeof ClearanceRequestSchema>;
 export type ClearanceResponse = z.infer<typeof ClearanceResponseSchema>;
 export type PolicyRegistration = z.infer<typeof PolicyRegistrationSchema>;
 export type PolicyRegistrationResponse = z.infer<typeof PolicyRegistrationResponseSchema>;
+export type LedgerEntry = z.infer<typeof LedgerEntrySchema>;
+export type LedgerManifest = z.infer<typeof LedgerManifestSchema>;
+export type LedgerVerificationResult = z.infer<typeof LedgerVerificationResultSchema>;
 
 // ──────────────────────────────────────────────────────────────────────
 // Case Conversion Utilities
@@ -91,7 +141,13 @@ export function toSnakeCaseKeys(obj: Record<string, unknown>): Record<string, un
     const result: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(obj)) {
         const snakeKey = camelToSnake(key);
-        if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+        if (Array.isArray(value)) {
+            result[snakeKey] = value.map((item) =>
+                item !== null && typeof item === "object" && !Array.isArray(item)
+                    ? toSnakeCaseKeys(item as Record<string, unknown>)
+                    : item,
+            );
+        } else if (value !== null && typeof value === "object") {
             result[snakeKey] = toSnakeCaseKeys(value as Record<string, unknown>);
         } else {
             result[snakeKey] = value;
@@ -108,7 +164,13 @@ export function toCamelCaseKeys(obj: Record<string, unknown>): Record<string, un
     const result: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(obj)) {
         const camelKey = snakeToCamel(key);
-        if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+        if (Array.isArray(value)) {
+            result[camelKey] = value.map((item) =>
+                item !== null && typeof item === "object" && !Array.isArray(item)
+                    ? toCamelCaseKeys(item as Record<string, unknown>)
+                    : item,
+            );
+        } else if (value !== null && typeof value === "object") {
             result[camelKey] = toCamelCaseKeys(value as Record<string, unknown>);
         } else {
             result[camelKey] = value;

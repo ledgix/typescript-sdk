@@ -1,6 +1,7 @@
 // Ledgix ALCV — Client Tests
 
 import { describe, expect, it, beforeEach } from "vitest";
+import * as jose from "jose";
 
 import { LedgixClient } from "../src/client.js";
 import {
@@ -23,6 +24,7 @@ import {
     policyResponse,
     type TestKeys,
 } from "./helpers.js";
+import type { LedgerEntry, LedgerManifest } from "../src/models.js";
 
 // ──────────────────────────────────────────────────────────────────────
 // Clearance
@@ -259,6 +261,117 @@ describe("LedgixClient.registerPolicy", () => {
         await expect(client.registerPolicy(policy)).rejects.toThrow(PolicyRegistrationError);
     });
 });
+
+describe("LedgixClient.verifyLedgerProof", () => {
+    it("verifies signed ledger entries and manifests offline", async () => {
+        const client = createTestClient();
+        const keys = await generateTestKeys();
+        const jwks = await buildJwksResponse(keys.publicKey);
+
+        server.use(
+            http.get("https://vault.test/.well-known/jwks.json", () => HttpResponse.json(jwks)),
+        );
+
+        const entryPayload = {
+            client_id: "demo",
+            seq: 1,
+            request_id: "req-1",
+            agent_id: "agent-1",
+            policy_id: "policy-1",
+            intent_hash: "intent-1",
+            tool_name: "stripe_refund",
+            tool_args: { amount: 45 },
+            reason: "approved",
+            citations: [],
+            evidence_chunks: [],
+            confidence: 0.91,
+            decided_at: "2026-03-15T12:00:00Z",
+            approved: true,
+            prev_row_hash: "0000000000000000000000000000000000000000000000000000000000000000",
+            row_hash: "rowhash-1",
+        };
+        const entryPayloadBytes = new TextEncoder().encode(JSON.stringify(entryPayload));
+        const entrySignature = await crypto.subtle.sign("Ed25519", keys.privateKey, entryPayloadBytes);
+
+        const manifestPayload = {
+            client_id: "demo",
+            period_start: "2026-03-15T12:00:00Z",
+            period_end_exclusive: "2026-03-15T13:00:00Z",
+            generated_at: "2026-03-15T12:05:00Z",
+            head_seq: 1,
+            head_row_hash: "rowhash-1",
+            head_row_signature: encodeBase64Url(new Uint8Array(entrySignature)),
+            prev_manifest_hash: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            signer_key_id: "test-key-001",
+        };
+        const manifestPayloadBytes = new TextEncoder().encode(JSON.stringify(manifestPayload));
+        const manifestHashBuffer = await crypto.subtle.digest("SHA-256", manifestPayloadBytes);
+        const manifestSignature = await crypto.subtle.sign("Ed25519", keys.privateKey, manifestPayloadBytes);
+
+        const entries: LedgerEntry[] = [
+            {
+                seq: 1,
+                requestId: "req-1",
+                agentId: "agent-1",
+                policyId: "policy-1",
+                intentHash: "intent-1",
+                toolName: "stripe_refund",
+                toolArgs: { amount: 45 },
+                reason: "approved",
+                citations: [],
+                evidenceChunks: [],
+                confidence: 0.91,
+                approved: true,
+                decidedAt: "2026-03-15T12:00:00Z",
+                prevRowHash: "0000000000000000000000000000000000000000000000000000000000000000",
+                rowHash: "rowhash-1",
+                signatureAlgorithm: "Ed25519",
+                signerKeyId: "test-key-001",
+                rowSignature: encodeBase64Url(new Uint8Array(entrySignature)),
+                receiptPayload: encodeBase64Url(entryPayloadBytes),
+            },
+        ];
+
+        const manifests: LedgerManifest[] = [
+            {
+                periodStart: "2026-03-15T12:00:00Z",
+                periodEndExclusive: "2026-03-15T13:00:00Z",
+                generatedAt: "2026-03-15T12:05:00Z",
+                headSeq: 1,
+                headRowHash: "rowhash-1",
+                headRowSignature: encodeBase64Url(new Uint8Array(entrySignature)),
+                manifestHash: `sha256:${toHex(new Uint8Array(manifestHashBuffer))}`,
+                prevManifestHash: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                signatureAlgorithm: "Ed25519",
+                signerKeyId: "test-key-001",
+                manifestSignature: encodeBase64Url(new Uint8Array(manifestSignature)),
+                manifestPayload: encodeBase64Url(manifestPayloadBytes),
+                anchorUri: "s3://ledger-anchors/demo/ledger-manifests/latest.json",
+                anchoredAt: "2026-03-15T12:05:00Z",
+            },
+        ];
+
+        const result = await client.verifyLedgerProof(entries, manifests);
+        expect(result.intact).toBe(true);
+        expect(result.verifiedEntries).toBe(1);
+        expect(result.verifiedManifests).toBe(1);
+        expect(result.latestRowHash).toBe("rowhash-1");
+    });
+});
+
+function encodeBase64Url(value: Uint8Array): string {
+    return Buffer.from(value)
+        .toString("base64")
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/g, "");
+}
+
+function toHex(value: Uint8Array): string {
+    return Array.from(value)
+        .map((item) => item.toString(16).padStart(2, "0"))
+        .join("");
+}
 
 // ──────────────────────────────────────────────────────────────────────
 // JWKS + Token verification

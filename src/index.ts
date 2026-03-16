@@ -29,6 +29,9 @@ export {
 export {
     ClearanceRequestSchema,
     ClearanceResponseSchema,
+    LedgerEntrySchema,
+    LedgerManifestSchema,
+    LedgerVerificationResultSchema,
     PolicyRegistrationSchema,
     PolicyRegistrationResponseSchema,
     toCamelCaseKeys,
@@ -37,6 +40,9 @@ export {
 export type {
     ClearanceRequest,
     ClearanceResponse,
+    LedgerEntry,
+    LedgerManifest,
+    LedgerVerificationResult,
     PolicyRegistration,
     PolicyRegistrationResponse,
 } from "./models.js";
