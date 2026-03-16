@@ -349,7 +349,12 @@ export class LedgixClient {
             const payloadBytes = decodeBase64Url(entry.receiptPayload);
             const signatureBytes = decodeBase64Url(entry.rowSignature);
             const key = await keyForKid(entry.signerKeyId);
-            const verified = await crypto.subtle.verify("Ed25519", key, signatureBytes, payloadBytes);
+            const verified = await crypto.subtle.verify(
+                "Ed25519",
+                key,
+                toArrayBuffer(signatureBytes),
+                toArrayBuffer(payloadBytes),
+            );
             if (!verified) {
                 throw new TokenVerificationError(`Ledger receipt signature invalid at seq ${entry.seq}`);
             }
@@ -383,7 +388,12 @@ export class LedgixClient {
 
             const signatureBytes = decodeBase64Url(manifest.manifestSignature);
             const key = await keyForKid(manifest.signerKeyId);
-            const verified = await crypto.subtle.verify("Ed25519", key, signatureBytes, payloadBytes);
+            const verified = await crypto.subtle.verify(
+                "Ed25519",
+                key,
+                toArrayBuffer(signatureBytes),
+                toArrayBuffer(payloadBytes),
+            );
             if (!verified) {
                 throw new TokenVerificationError(`Ledger manifest signature invalid for period ${manifest.periodStart}`);
             }
@@ -433,8 +443,14 @@ function decodeBase64Url(value: string): Uint8Array {
     return bytes;
 }
 
+function toArrayBuffer(value: Uint8Array): ArrayBuffer {
+    const copy = new Uint8Array(value.byteLength);
+    copy.set(value);
+    return copy.buffer;
+}
+
 async function sha256Hex(value: Uint8Array): Promise<string> {
-    const digest = await crypto.subtle.digest("SHA-256", value);
+    const digest = await crypto.subtle.digest("SHA-256", toArrayBuffer(value));
     return Array.from(new Uint8Array(digest))
         .map((item) => item.toString(16).padStart(2, "0"))
         .join("");
