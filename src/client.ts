@@ -379,11 +379,17 @@ export class LedgixClient {
             .sort((a, b) => (a.leafIndex ?? 0) - (b.leafIndex ?? 0));
 
         let latestLeafHash: string | null = null;
+        const coverageNotes: string[] = [];
+        let redactedEntryCount = 0;
 
         for (const entry of sortedEntries) {
-            const expectedEventHash = await buildEventHash(entry);
-            if (expectedEventHash !== entry.eventHash) {
-                throw new TokenVerificationError(`Ledger event hash mismatch at seq ${entry.seq}`);
+            if (hasProtectedEventFields(entry)) {
+                const expectedEventHash = await buildEventHash(entry);
+                if (expectedEventHash !== entry.eventHash) {
+                    throw new TokenVerificationError(`Ledger event hash mismatch at seq ${entry.seq}`);
+                }
+            } else {
+                redactedEntryCount += 1;
             }
             const expectedLeafHash = await hashLeafHex(entry.eventHash);
             if (expectedLeafHash !== entry.leafHash) {
@@ -410,6 +416,11 @@ export class LedgixClient {
                 throw new TokenVerificationError(`Ledger receipt signature invalid at seq ${entry.seq}`);
             }
             latestLeafHash = entry.leafHash;
+        }
+        if (redactedEntryCount > 0) {
+            coverageNotes.push(
+                `Event-body hash recomputation was skipped for ${redactedEntryCount} redacted public ledger entr${redactedEntryCount === 1 ? "y" : "ies"}; receipt and checkpoint proofs still verified.`,
+            );
         }
 
         const sortedCheckpoints = [...checkpoints].sort(
@@ -459,8 +470,13 @@ export class LedgixClient {
                     throw new TokenVerificationError("Latest checkpoint root does not match sequenced leaf hashes");
                 }
             } else {
-                coverageNote = `Provided ${sequencedEntries.length} sequenced entries for tree size ${latestCheckpoint.treeSize}; full root verification requires the complete covered set.`;
+                coverageNotes.push(
+                    `Provided ${sequencedEntries.length} sequenced entries for tree size ${latestCheckpoint.treeSize}; full root verification requires the complete covered set.`,
+                );
             }
+        }
+        if (coverageNotes.length > 0) {
+            coverageNote = coverageNotes.join(" ");
         }
 
         return LedgerVerificationResultSchema.parse({
@@ -777,6 +793,10 @@ async function buildEventHash(entry: LedgerEntry): Promise<string> {
         tool_name: entry.toolName,
     });
     return hashEventHex(payload);
+}
+
+function hasProtectedEventFields(entry: LedgerEntry): boolean {
+    return typeof entry.intentHash === "string" && entry.intentHash.length > 0;
 }
 
 function buildReceiptPayload(entry: LedgerEntry): Uint8Array {

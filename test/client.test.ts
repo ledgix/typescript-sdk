@@ -351,6 +351,93 @@ describe("LedgixClient.verifyLedgerProof", () => {
         expect(result.verifiedManifests).toBe(1);
         expect(result.latestLeafHash).toBe(leafHash);
     });
+
+    it("treats redacted public ledger entries as partial coverage instead of failure", async () => {
+        const client = createTestClient();
+        const keys = await generateTestKeys();
+        const jwks = await buildJwksResponse(keys.publicKey);
+
+        server.use(
+            http.get("https://vault.test/.well-known/jwks.json", () => HttpResponse.json(jwks)),
+        );
+
+        const fullEntry: LedgerEntry = {
+            seq: 1,
+            eventUuid: "evt-1",
+            requestId: "req-1",
+            agentId: "agent-1",
+            policyId: "policy-1",
+            intentHash: "intent-1",
+            toolName: "stripe_refund",
+            toolArgs: { amount: 45 },
+            reason: "approved",
+            citations: [],
+            evidenceChunks: [],
+            confidence: 0.91,
+            approved: true,
+            acceptedAt: "2026-03-15T12:00:00Z",
+            canonicalVersion: 1,
+            eventHash: "",
+            leafHash: "",
+            leafIndex: 0,
+            checkpointId: 1,
+            receiptAlgorithm: "Ed25519",
+            receiptKeyId: "test-key-001",
+            receiptSignature: "",
+            receiptPayload: "",
+        };
+        const eventHash = await buildEventHashForTest(fullEntry);
+        const leafHash = await hashLeafForTest(eventHash);
+        const entryReceiptPayload = buildReceiptPayloadForTest({
+            ...fullEntry,
+            eventHash,
+            leafHash,
+        });
+        const entrySignature = await crypto.subtle.sign("Ed25519", keys.privateKey, entryReceiptPayload);
+        const publicEntry: LedgerEntry = {
+            ...fullEntry,
+            intentHash: "",
+            toolArgs: {},
+            eventHash,
+            leafHash,
+            receiptSignature: encodeBase64Url(new Uint8Array(entrySignature)),
+            receiptPayload: encodeBase64Url(entryReceiptPayload),
+        };
+
+        const checkpointBase: LedgerCheckpoint = {
+            checkpointId: 1,
+            microblockId: 1,
+            treeSize: 1,
+            rootHash: leafHash,
+            checkpointHash: "",
+            prevCheckpointHash: "",
+            signatureAlgorithm: "Ed25519",
+            signerKeyId: "test-key-001",
+            checkpointSignature: "",
+            checkpointPayload: "",
+            signedAt: "2026-03-15T12:05:00Z",
+            mmdSeconds: 30,
+            exportTarget: "",
+            exportUri: "",
+            exportStatus: "",
+        };
+        const checkpointPayload = buildCheckpointPayloadForTest(checkpointBase);
+        const checkpointHash = await hashCheckpointPayloadForTest(checkpointPayload);
+        const checkpointSignature = await crypto.subtle.sign("Ed25519", keys.privateKey, checkpointPayload);
+        const checkpoints: LedgerCheckpoint[] = [
+            {
+                ...checkpointBase,
+                checkpointHash,
+                checkpointSignature: encodeBase64Url(new Uint8Array(checkpointSignature)),
+                checkpointPayload: encodeBase64Url(checkpointPayload),
+            },
+        ];
+
+        const result = await client.verifyLedgerProof([publicEntry], checkpoints);
+        expect(result.intact).toBe(true);
+        expect(result.verifiedEntries).toBe(1);
+        expect(result.coverageNote).toContain("redacted public ledger entry");
+    });
 });
 
 function encodeBase64Url(value: Uint8Array): string {
