@@ -618,6 +618,31 @@ function encodeUtf8(value: string): Uint8Array {
     return new TextEncoder().encode(value);
 }
 
+class CborFloat64 {
+    constructor(readonly value: number) {}
+}
+
+function normalizeJSONNumbersForCbor(value: unknown): unknown {
+    if (value === null || value === undefined) {
+        return value ?? null;
+    }
+    if (typeof value === "boolean" || typeof value === "string") {
+        return value;
+    }
+    if (typeof value === "number") {
+        return new CborFloat64(value);
+    }
+    if (Array.isArray(value)) {
+        return value.map((item) => normalizeJSONNumbersForCbor(item));
+    }
+    if (typeof value === "object") {
+        return Object.fromEntries(
+            Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, normalizeJSONNumbersForCbor(item)]),
+        );
+    }
+    return value;
+}
+
 function encodeDeterministicCbor(value: unknown): Uint8Array {
     if (value === null) {
         return Uint8Array.of(0xf6);
@@ -628,6 +653,11 @@ function encodeDeterministicCbor(value: unknown): Uint8Array {
     if (typeof value === "string") {
         const bytes = encodeUtf8(value);
         return concatBytes(cborHeader(3, bytes.length), bytes);
+    }
+    if (value instanceof CborFloat64) {
+        const scratch = new ArrayBuffer(8);
+        new DataView(scratch).setFloat64(0, value.value, false);
+        return concatBytes(Uint8Array.of(0xfb), new Uint8Array(scratch));
     }
     if (typeof value === "number") {
         if (!Number.isFinite(value)) {
@@ -735,15 +765,15 @@ async function buildEventHash(entry: LedgerEntry): Promise<string> {
         agent_id: entry.agentId,
         approved: entry.approved,
         canonical_version: entry.canonicalVersion,
-        citations: entry.citations,
+        citations: normalizeJSONNumbersForCbor(entry.citations),
         confidence: entry.confidence,
         event_uuid: entry.eventUuid,
-        evidence_chunks: entry.evidenceChunks,
+        evidence_chunks: normalizeJSONNumbersForCbor(entry.evidenceChunks),
         intent_hash: entry.intentHash,
         policy_id: entry.policyId,
         reason: entry.reason,
         request_id: entry.requestId,
-        tool_args: entry.toolArgs,
+        tool_args: normalizeJSONNumbersForCbor(entry.toolArgs),
         tool_name: entry.toolName,
     });
     return hashEventHex(payload);

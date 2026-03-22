@@ -414,6 +414,31 @@ function encodeCborInteger(value: number): Uint8Array {
     return cborHeader(1, -(value + 1));
 }
 
+class TestCborFloat64 {
+    constructor(readonly value: number) {}
+}
+
+function normalizeJSONNumbersForTestCbor(value: unknown): unknown {
+    if (value === null || value === undefined) {
+        return value ?? null;
+    }
+    if (typeof value === "boolean" || typeof value === "string") {
+        return value;
+    }
+    if (typeof value === "number") {
+        return new TestCborFloat64(value);
+    }
+    if (Array.isArray(value)) {
+        return value.map((item) => normalizeJSONNumbersForTestCbor(item));
+    }
+    if (typeof value === "object") {
+        return Object.fromEntries(
+            Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, normalizeJSONNumbersForTestCbor(item)]),
+        );
+    }
+    return value;
+}
+
 function encodeDeterministicCborForTest(value: unknown): Uint8Array {
     if (value === null) {
         return Uint8Array.of(0xf6);
@@ -424,6 +449,11 @@ function encodeDeterministicCborForTest(value: unknown): Uint8Array {
     if (typeof value === "string") {
         const bytes = encodeUtf8(value);
         return concatBytes(cborHeader(3, bytes.length), bytes);
+    }
+    if (value instanceof TestCborFloat64) {
+        const scratch = new ArrayBuffer(8);
+        new DataView(scratch).setFloat64(0, value.value, false);
+        return concatBytes(Uint8Array.of(0xfb), new Uint8Array(scratch));
     }
     if (typeof value === "number") {
         if (Number.isSafeInteger(value)) {
@@ -464,15 +494,15 @@ async function buildEventHashForTest(entry: LedgerEntry): Promise<string> {
         agent_id: entry.agentId,
         approved: entry.approved,
         canonical_version: entry.canonicalVersion,
-        citations: entry.citations,
+        citations: normalizeJSONNumbersForTestCbor(entry.citations),
         confidence: entry.confidence,
         event_uuid: entry.eventUuid,
-        evidence_chunks: entry.evidenceChunks,
+        evidence_chunks: normalizeJSONNumbersForTestCbor(entry.evidenceChunks),
         intent_hash: entry.intentHash,
         policy_id: entry.policyId,
         reason: entry.reason,
         request_id: entry.requestId,
-        tool_args: entry.toolArgs,
+        tool_args: normalizeJSONNumbersForTestCbor(entry.toolArgs),
         tool_name: entry.toolName,
     });
     return sha256HexForTest(concatBytes(encodeUtf8("ledgix.audit.event.v1\0"), payload));

@@ -1,6 +1,6 @@
 {
   "name": "ledgix-ts",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Ledgix ALCV — TypeScript SDK for SOX 404 compliance enforcement on AI agent tool calls",
   "license": "MIT",
   "type": "module",
