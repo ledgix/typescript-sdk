@@ -62,6 +62,7 @@ export const PolicyRegistrationResponseSchema = z.object({
 
 export const LedgerEntrySchema = z.object({
     seq: z.number(),
+    eventUuid: z.string(),
     requestId: z.string(),
     agentId: z.string(),
     policyId: z.string(),
@@ -73,38 +74,83 @@ export const LedgerEntrySchema = z.object({
     evidenceChunks: z.array(z.record(z.unknown())).default([]),
     confidence: z.number().default(0),
     approved: z.boolean(),
-    decidedAt: z.string(),
-    prevRowHash: z.string().default(""),
-    rowHash: z.string(),
-    signatureAlgorithm: z.string().default(""),
-    signerKeyId: z.string().default(""),
-    rowSignature: z.string().default(""),
+    acceptedAt: z.string(),
+    canonicalVersion: z.number().int().default(1),
+    eventHash: z.string(),
+    leafHash: z.string(),
+    leafIndex: z.number().nullable().optional(),
+    checkpointId: z.number().nullable().optional(),
+    receiptAlgorithm: z.string().default(""),
+    receiptKeyId: z.string().default(""),
+    receiptSignature: z.string().default(""),
     receiptPayload: z.string().default(""),
 });
 
-export const LedgerManifestSchema = z.object({
-    periodStart: z.string(),
-    periodEndExclusive: z.string(),
-    generatedAt: z.string(),
-    headSeq: z.number(),
-    headRowHash: z.string(),
-    headRowSignature: z.string().default(""),
-    manifestHash: z.string(),
-    prevManifestHash: z.string().default(""),
+export const LedgerCheckpointSchema = z.object({
+    checkpointId: z.number(),
+    microblockId: z.number(),
+    treeSize: z.number(),
+    rootHash: z.string(),
+    checkpointHash: z.string(),
+    prevCheckpointHash: z.string().default(""),
     signatureAlgorithm: z.string().default(""),
     signerKeyId: z.string().default(""),
-    manifestSignature: z.string().default(""),
-    manifestPayload: z.string().default(""),
-    anchorUri: z.string().default(""),
-    anchoredAt: z.string().optional(),
+    checkpointSignature: z.string().default(""),
+    checkpointPayload: z.string().default(""),
+    signedAt: z.string(),
+    mmdSeconds: z.number().int().default(30),
+    exportTarget: z.string().default(""),
+    exportUri: z.string().default(""),
+    exportStatus: z.string().default(""),
+    exportedAt: z.string().optional(),
+});
+
+export const LedgerKeyVersionSchema = z.object({
+    keyId: z.string(),
+    algorithm: z.string(),
+    publicJwk: z.string().default(""),
+    activeFrom: z.string(),
+    retiredAt: z.string().optional(),
+    attestationPayload: z.string().default(""),
+    attestationSignature: z.string().default(""),
+    attestationKeyId: z.string().default(""),
+    attestationStatus: z.string().default(""),
+});
+
+export const InclusionProofSchema = z.object({
+    eventUuid: z.string(),
+    requestId: z.string(),
+    eventHash: z.string(),
+    leafHash: z.string(),
+    leafIndex: z.number(),
+    treeSize: z.number(),
+    path: z.array(z.string()).default([]),
+    checkpoint: LedgerCheckpointSchema,
+});
+
+export const ConsistencyProofSchema = z.object({
+    fromCheckpoint: LedgerCheckpointSchema,
+    toCheckpoint: LedgerCheckpointSchema,
+    path: z.array(z.string()).default([]),
+});
+
+export const LedgerProofBundleSchema = z.object({
+    event: LedgerEntrySchema,
+    inclusion: InclusionProofSchema,
+    consistency: ConsistencyProofSchema.optional(),
+    keys: z.array(LedgerKeyVersionSchema).default([]),
 });
 
 export const LedgerVerificationResultSchema = z.object({
     intact: z.boolean(),
     verifiedEntries: z.number().int().nonnegative(),
-    verifiedManifests: z.number().int().nonnegative(),
-    latestRowHash: z.string().nullable(),
-    latestManifestHash: z.string().nullable(),
+    verifiedCheckpoints: z.number().int().nonnegative().default(0),
+    verifiedManifests: z.number().int().nonnegative().default(0),
+    latestLeafHash: z.string().nullable().default(null),
+    latestCheckpointHash: z.string().nullable().default(null),
+    latestManifestHash: z.string().nullable().default(null),
+    coverageNote: z.string().optional(),
+    error: z.string().optional(),
 });
 
 // ──────────────────────────────────────────────────────────────────────
@@ -116,7 +162,12 @@ export type ClearanceResponse = z.infer<typeof ClearanceResponseSchema>;
 export type PolicyRegistration = z.infer<typeof PolicyRegistrationSchema>;
 export type PolicyRegistrationResponse = z.infer<typeof PolicyRegistrationResponseSchema>;
 export type LedgerEntry = z.infer<typeof LedgerEntrySchema>;
-export type LedgerManifest = z.infer<typeof LedgerManifestSchema>;
+export type LedgerCheckpoint = z.infer<typeof LedgerCheckpointSchema>;
+export type LedgerManifest = LedgerCheckpoint;
+export type LedgerKeyVersion = z.infer<typeof LedgerKeyVersionSchema>;
+export type InclusionProof = z.infer<typeof InclusionProofSchema>;
+export type ConsistencyProof = z.infer<typeof ConsistencyProofSchema>;
+export type LedgerProofBundle = z.infer<typeof LedgerProofBundleSchema>;
 export type LedgerVerificationResult = z.infer<typeof LedgerVerificationResultSchema>;
 
 // ──────────────────────────────────────────────────────────────────────

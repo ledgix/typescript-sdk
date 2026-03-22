@@ -24,7 +24,7 @@ import {
     policyResponse,
     type TestKeys,
 } from "./helpers.js";
-import type { LedgerEntry, LedgerManifest } from "../src/models.js";
+import type { LedgerCheckpoint, LedgerEntry } from "../src/models.js";
 
 // ──────────────────────────────────────────────────────────────────────
 // Clearance
@@ -263,7 +263,7 @@ describe("LedgixClient.registerPolicy", () => {
 });
 
 describe("LedgixClient.verifyLedgerProof", () => {
-    it("verifies signed ledger entries and manifests offline", async () => {
+    it("verifies signed ledger entries and checkpoints offline", async () => {
         const client = createTestClient();
         const keys = await generateTestKeys();
         const jwks = await buildJwksResponse(keys.publicKey);
@@ -272,90 +272,84 @@ describe("LedgixClient.verifyLedgerProof", () => {
             http.get("https://vault.test/.well-known/jwks.json", () => HttpResponse.json(jwks)),
         );
 
-        const entryPayload = {
-            client_id: "demo",
+        const baseEntry: LedgerEntry = {
             seq: 1,
-            request_id: "req-1",
-            agent_id: "agent-1",
-            policy_id: "policy-1",
-            intent_hash: "intent-1",
-            tool_name: "stripe_refund",
-            tool_args: { amount: 45 },
+            eventUuid: "evt-1",
+            requestId: "req-1",
+            agentId: "agent-1",
+            policyId: "policy-1",
+            intentHash: "intent-1",
+            toolName: "stripe_refund",
+            toolArgs: { amount: 45 },
             reason: "approved",
             citations: [],
-            evidence_chunks: [],
+            evidenceChunks: [],
             confidence: 0.91,
-            decided_at: "2026-03-15T12:00:00Z",
             approved: true,
-            prev_row_hash: "0000000000000000000000000000000000000000000000000000000000000000",
-            row_hash: "rowhash-1",
+            acceptedAt: "2026-03-15T12:00:00Z",
+            canonicalVersion: 1,
+            eventHash: "",
+            leafHash: "",
+            leafIndex: 0,
+            checkpointId: 1,
+            receiptAlgorithm: "Ed25519",
+            receiptKeyId: "test-key-001",
+            receiptSignature: "",
+            receiptPayload: "",
         };
-        const entryPayloadBytes = new TextEncoder().encode(JSON.stringify(entryPayload));
-        const entrySignature = await crypto.subtle.sign("Ed25519", keys.privateKey, entryPayloadBytes);
-
-        const manifestPayload = {
-            client_id: "demo",
-            period_start: "2026-03-15T12:00:00Z",
-            period_end_exclusive: "2026-03-15T13:00:00Z",
-            generated_at: "2026-03-15T12:05:00Z",
-            head_seq: 1,
-            head_row_hash: "rowhash-1",
-            head_row_signature: encodeBase64Url(new Uint8Array(entrySignature)),
-            prev_manifest_hash: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-            signer_key_id: "test-key-001",
-        };
-        const manifestPayloadBytes = new TextEncoder().encode(JSON.stringify(manifestPayload));
-        const manifestHashBuffer = await crypto.subtle.digest("SHA-256", manifestPayloadBytes);
-        const manifestSignature = await crypto.subtle.sign("Ed25519", keys.privateKey, manifestPayloadBytes);
-
+        const eventHash = await buildEventHashForTest(baseEntry);
+        const leafHash = await hashLeafForTest(eventHash);
+        const entryReceiptPayload = buildReceiptPayloadForTest({
+            ...baseEntry,
+            eventHash,
+            leafHash,
+        });
+        const entrySignature = await crypto.subtle.sign("Ed25519", keys.privateKey, entryReceiptPayload);
         const entries: LedgerEntry[] = [
             {
-                seq: 1,
-                requestId: "req-1",
-                agentId: "agent-1",
-                policyId: "policy-1",
-                intentHash: "intent-1",
-                toolName: "stripe_refund",
-                toolArgs: { amount: 45 },
-                reason: "approved",
-                citations: [],
-                evidenceChunks: [],
-                confidence: 0.91,
-                approved: true,
-                decidedAt: "2026-03-15T12:00:00Z",
-                prevRowHash: "0000000000000000000000000000000000000000000000000000000000000000",
-                rowHash: "rowhash-1",
-                signatureAlgorithm: "Ed25519",
-                signerKeyId: "test-key-001",
-                rowSignature: encodeBase64Url(new Uint8Array(entrySignature)),
-                receiptPayload: encodeBase64Url(entryPayloadBytes),
+                ...baseEntry,
+                eventHash,
+                leafHash,
+                receiptSignature: encodeBase64Url(new Uint8Array(entrySignature)),
+                receiptPayload: encodeBase64Url(entryReceiptPayload),
             },
         ];
 
-        const manifests: LedgerManifest[] = [
+        const checkpointBase: LedgerCheckpoint = {
+            checkpointId: 1,
+            microblockId: 1,
+            treeSize: 1,
+            rootHash: leafHash,
+            checkpointHash: "",
+            prevCheckpointHash: "",
+            signatureAlgorithm: "Ed25519",
+            signerKeyId: "test-key-001",
+            checkpointSignature: "",
+            checkpointPayload: "",
+            signedAt: "2026-03-15T12:05:00Z",
+            mmdSeconds: 30,
+            exportTarget: "",
+            exportUri: "",
+            exportStatus: "",
+        };
+        const checkpointPayload = buildCheckpointPayloadForTest(checkpointBase);
+        const checkpointHash = await hashCheckpointPayloadForTest(checkpointPayload);
+        const checkpointSignature = await crypto.subtle.sign("Ed25519", keys.privateKey, checkpointPayload);
+        const checkpoints: LedgerCheckpoint[] = [
             {
-                periodStart: "2026-03-15T12:00:00Z",
-                periodEndExclusive: "2026-03-15T13:00:00Z",
-                generatedAt: "2026-03-15T12:05:00Z",
-                headSeq: 1,
-                headRowHash: "rowhash-1",
-                headRowSignature: encodeBase64Url(new Uint8Array(entrySignature)),
-                manifestHash: `sha256:${toHex(new Uint8Array(manifestHashBuffer))}`,
-                prevManifestHash: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-                signatureAlgorithm: "Ed25519",
-                signerKeyId: "test-key-001",
-                manifestSignature: encodeBase64Url(new Uint8Array(manifestSignature)),
-                manifestPayload: encodeBase64Url(manifestPayloadBytes),
-                anchorUri: "s3://ledger-anchors/demo/ledger-manifests/latest.json",
-                anchoredAt: "2026-03-15T12:05:00Z",
+                ...checkpointBase,
+                checkpointHash,
+                checkpointSignature: encodeBase64Url(new Uint8Array(checkpointSignature)),
+                checkpointPayload: encodeBase64Url(checkpointPayload),
             },
         ];
 
-        const result = await client.verifyLedgerProof(entries, manifests);
+        const result = await client.verifyLedgerProof(entries, checkpoints);
         expect(result.intact).toBe(true);
         expect(result.verifiedEntries).toBe(1);
+        expect(result.verifiedCheckpoints).toBe(1);
         expect(result.verifiedManifests).toBe(1);
-        expect(result.latestRowHash).toBe("rowhash-1");
+        expect(result.latestLeafHash).toBe(leafHash);
     });
 });
 
@@ -371,6 +365,152 @@ function toHex(value: Uint8Array): string {
     return Array.from(value)
         .map((item) => item.toString(16).padStart(2, "0"))
         .join("");
+}
+
+function encodeUtf8(value: string): Uint8Array {
+    return new TextEncoder().encode(value);
+}
+
+function concatBytes(...parts: Uint8Array[]): Uint8Array {
+    const total = parts.reduce((sum, part) => sum + part.length, 0);
+    const result = new Uint8Array(total);
+    let offset = 0;
+    for (const part of parts) {
+        result.set(part, offset);
+        offset += part.length;
+    }
+    return result;
+}
+
+function cborHeader(major: number, value: number): Uint8Array {
+    if (value < 24) {
+        return Uint8Array.of((major << 5) | value);
+    }
+    if (value <= 0xff) {
+        return Uint8Array.of((major << 5) | 24, value);
+    }
+    if (value <= 0xffff) {
+        const scratch = new Uint8Array(3);
+        scratch[0] = (major << 5) | 25;
+        new DataView(scratch.buffer).setUint16(1, value, false);
+        return scratch;
+    }
+    if (value <= 0xffffffff) {
+        const scratch = new Uint8Array(5);
+        scratch[0] = (major << 5) | 26;
+        new DataView(scratch.buffer).setUint32(1, value, false);
+        return scratch;
+    }
+    const scratch = new Uint8Array(9);
+    scratch[0] = (major << 5) | 27;
+    new DataView(scratch.buffer).setBigUint64(1, BigInt(value), false);
+    return scratch;
+}
+
+function encodeCborInteger(value: number): Uint8Array {
+    if (value >= 0) {
+        return cborHeader(0, value);
+    }
+    return cborHeader(1, -(value + 1));
+}
+
+function encodeDeterministicCborForTest(value: unknown): Uint8Array {
+    if (value === null) {
+        return Uint8Array.of(0xf6);
+    }
+    if (typeof value === "boolean") {
+        return Uint8Array.of(value ? 0xf5 : 0xf4);
+    }
+    if (typeof value === "string") {
+        const bytes = encodeUtf8(value);
+        return concatBytes(cborHeader(3, bytes.length), bytes);
+    }
+    if (typeof value === "number") {
+        if (Number.isSafeInteger(value)) {
+            return encodeCborInteger(value);
+        }
+        const scratch = new ArrayBuffer(8);
+        new DataView(scratch).setFloat64(0, value, false);
+        return concatBytes(Uint8Array.of(0xfb), new Uint8Array(scratch));
+    }
+    if (Array.isArray(value)) {
+        const items = value.map((item) => encodeDeterministicCborForTest(item));
+        return concatBytes(cborHeader(4, items.length), ...items);
+    }
+    if (typeof value === "object") {
+        const entries = Object.entries(value as Record<string, unknown>).sort(([left], [right]) => {
+            if (left.length === right.length) {
+                return left < right ? -1 : left > right ? 1 : 0;
+            }
+            return left.length - right.length;
+        });
+        const encodedEntries = entries.flatMap(([key, item]) => [
+            encodeDeterministicCborForTest(key),
+            encodeDeterministicCborForTest(item),
+        ]);
+        return concatBytes(cborHeader(5, entries.length), ...encodedEntries);
+    }
+    throw new Error(`Unsupported test CBOR value type: ${typeof value}`);
+}
+
+async function sha256HexForTest(value: Uint8Array): Promise<string> {
+    const digest = await crypto.subtle.digest("SHA-256", value);
+    return toHex(new Uint8Array(digest));
+}
+
+async function buildEventHashForTest(entry: LedgerEntry): Promise<string> {
+    const payload = encodeDeterministicCborForTest({
+        accepted_at: entry.acceptedAt,
+        agent_id: entry.agentId,
+        approved: entry.approved,
+        canonical_version: entry.canonicalVersion,
+        citations: entry.citations,
+        confidence: entry.confidence,
+        event_uuid: entry.eventUuid,
+        evidence_chunks: entry.evidenceChunks,
+        intent_hash: entry.intentHash,
+        policy_id: entry.policyId,
+        reason: entry.reason,
+        request_id: entry.requestId,
+        tool_args: entry.toolArgs,
+        tool_name: entry.toolName,
+    });
+    return sha256HexForTest(concatBytes(encodeUtf8("ledgix.audit.event.v1\0"), payload));
+}
+
+async function hashLeafForTest(eventHash: string): Promise<string> {
+    return sha256HexForTest(concatBytes(Uint8Array.of(0x00), Uint8Array.from(Buffer.from(eventHash, "hex"))));
+}
+
+function buildReceiptPayloadForTest(entry: LedgerEntry): Uint8Array {
+    return encodeDeterministicCborForTest({
+        accepted_at: entry.acceptedAt,
+        event_hash: entry.eventHash,
+        event_uuid: entry.eventUuid,
+        leaf_hash: entry.leafHash,
+        receipt_key_id: entry.receiptKeyId,
+        request_id: entry.requestId,
+        type: "event_receipt",
+        version: 1,
+    });
+}
+
+function buildCheckpointPayloadForTest(checkpoint: LedgerCheckpoint): Uint8Array {
+    return encodeDeterministicCborForTest({
+        export_targets: checkpoint.exportTarget ? [checkpoint.exportTarget] : [],
+        key_id: checkpoint.signerKeyId,
+        mmd_seconds: checkpoint.mmdSeconds,
+        prev_checkpoint_hash: checkpoint.prevCheckpointHash,
+        root_hash: checkpoint.rootHash,
+        signed_at: checkpoint.signedAt,
+        tree_size: checkpoint.treeSize,
+        type: "checkpoint",
+        version: 1,
+    });
+}
+
+async function hashCheckpointPayloadForTest(payload: Uint8Array): Promise<string> {
+    return sha256HexForTest(concatBytes(encodeUtf8("ledgix.audit.checkpoint.v1\0"), payload));
 }
 
 // ──────────────────────────────────────────────────────────────────────

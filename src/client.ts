@@ -16,7 +16,12 @@ import type {
     ClearanceRequest,
     ClearanceResponse,
     LedgerEntry,
+    LedgerCheckpoint,
+    LedgerKeyVersion,
     LedgerManifest,
+    InclusionProof,
+    ConsistencyProof,
+    LedgerProofBundle,
     LedgerVerificationResult,
     PolicyRegistration,
     PolicyRegistrationResponse,
@@ -24,7 +29,10 @@ import type {
 import {
     ClearanceResponseSchema,
     LedgerEntrySchema,
-    LedgerManifestSchema,
+    LedgerCheckpointSchema,
+    InclusionProofSchema,
+    ConsistencyProofSchema,
+    LedgerProofBundleSchema,
     LedgerVerificationResultSchema,
     PolicyRegistrationResponseSchema,
     toCamelCaseKeys,
@@ -293,30 +301,60 @@ export class LedgixClient {
         return entries.map((entry) => LedgerEntrySchema.parse(entry));
     }
 
-    async fetchLedgerManifests(limit = 24): Promise<LedgerManifest[]> {
-        const response = await this._fetch(`/ledger/manifests?limit=${encodeURIComponent(String(limit))}`);
+    async fetchLedgerCheckpoints(limit = 24): Promise<LedgerCheckpoint[]> {
+        const response = await this._fetch(`/ledger/checkpoints?limit=${encodeURIComponent(String(limit))}`);
 
         if (!response.ok) {
-            throw new VaultConnectionError(`Failed to fetch ledger manifests: HTTP ${response.status}`);
+            throw new VaultConnectionError(`Failed to fetch ledger checkpoints: HTTP ${response.status}`);
         }
 
         const data = toCamelCaseKeys((await response.json()) as Record<string, unknown>);
-        const manifests = Array.isArray(data.manifests) ? data.manifests : [];
-        return manifests.map((manifest) => LedgerManifestSchema.parse(manifest));
+        const checkpoints = Array.isArray(data.checkpoints) ? data.checkpoints : [];
+        return checkpoints.map((checkpoint) => LedgerCheckpointSchema.parse(checkpoint));
     }
 
-    async verifyLedgerProof(entries: LedgerEntry[], manifests: LedgerManifest[] = []): Promise<LedgerVerificationResult> {
+    async fetchLedgerManifests(limit = 24): Promise<LedgerManifest[]> {
+        return this.fetchLedgerCheckpoints(limit);
+    }
+
+    async fetchLedgerInclusionProof(requestId: string): Promise<InclusionProof> {
+        const response = await this._fetch(`/ledger/proof/inclusion?request_id=${encodeURIComponent(requestId)}`);
+        if (!response.ok) {
+            throw new VaultConnectionError(`Failed to fetch inclusion proof: HTTP ${response.status}`);
+        }
+        const data = toCamelCaseKeys((await response.json()) as Record<string, unknown>);
+        return InclusionProofSchema.parse(data);
+    }
+
+    async fetchLedgerConsistencyProof(fromCheckpointId: number, toCheckpointId: number): Promise<ConsistencyProof> {
+        const response = await this._fetch(
+            `/ledger/proof/consistency?from=${encodeURIComponent(String(fromCheckpointId))}&to=${encodeURIComponent(String(toCheckpointId))}`,
+        );
+        if (!response.ok) {
+            throw new VaultConnectionError(`Failed to fetch consistency proof: HTTP ${response.status}`);
+        }
+        const data = toCamelCaseKeys((await response.json()) as Record<string, unknown>);
+        return ConsistencyProofSchema.parse(data);
+    }
+
+    async fetchLedgerProofBundle(requestId: string): Promise<LedgerProofBundle> {
+        const response = await this._fetch(`/ledger/proof/bundle?request_id=${encodeURIComponent(requestId)}`);
+        if (!response.ok) {
+            throw new VaultConnectionError(`Failed to fetch ledger proof bundle: HTTP ${response.status}`);
+        }
+        const data = toCamelCaseKeys((await response.json()) as Record<string, unknown>);
+        return LedgerProofBundleSchema.parse(data);
+    }
+
+    async verifyLedgerProof(entries: LedgerEntry[], checkpoints: LedgerCheckpoint[] = []): Promise<LedgerVerificationResult> {
         if (!this._jwksCache) {
             await this.fetchJwks();
         }
 
-        if (!this._jwksCache) {
-            throw new TokenVerificationError("No JWKS available from Vault");
-        }
+        const verificationKeys = this._resolveVerificationKeys();
 
-        const jwks = this._jwksCache as { keys?: Record<string, unknown>[] };
-        if (!jwks.keys || jwks.keys.length === 0) {
-            throw new TokenVerificationError("JWKS contains no keys");
+        if (verificationKeys.length === 0) {
+            throw new TokenVerificationError("No JWKS available from Vault");
         }
 
         const keyCache = new Map<string, CryptoKey>();
@@ -325,7 +363,7 @@ export class LedgixClient {
                 return keyCache.get(kid)!;
             }
 
-            const jwk = jwks.keys!.find((item) => item.kid === kid);
+            const jwk = verificationKeys.find((item) => item.kid === kid);
             if (!jwk) {
                 throw new TokenVerificationError(`No JWKS key found for kid ${kid}`);
             }
@@ -336,19 +374,32 @@ export class LedgixClient {
         };
 
         const sortedEntries = [...entries].sort((a, b) => a.seq - b.seq);
-        let previousRowHash = "0000000000000000000000000000000000000000000000000000000000000000";
+        const sequencedEntries = sortedEntries
+            .filter((entry) => entry.leafIndex !== null && entry.leafIndex !== undefined)
+            .sort((a, b) => (a.leafIndex ?? 0) - (b.leafIndex ?? 0));
+
+        let latestLeafHash: string | null = null;
 
         for (const entry of sortedEntries) {
-            if (entry.prevRowHash !== previousRowHash) {
-                throw new TokenVerificationError(`Ledger chain broken at seq ${entry.seq}`);
+            const expectedEventHash = await buildEventHash(entry);
+            if (expectedEventHash !== entry.eventHash) {
+                throw new TokenVerificationError(`Ledger event hash mismatch at seq ${entry.seq}`);
             }
-            if (entry.signatureAlgorithm !== "Ed25519") {
-                throw new TokenVerificationError(`Unsupported ledger signature algorithm ${entry.signatureAlgorithm}`);
+            const expectedLeafHash = await hashLeafHex(entry.eventHash);
+            if (expectedLeafHash !== entry.leafHash) {
+                throw new TokenVerificationError(`Ledger leaf hash mismatch at seq ${entry.seq}`);
+            }
+            if (entry.receiptAlgorithm !== "Ed25519") {
+                throw new TokenVerificationError(`Unsupported ledger receipt algorithm ${entry.receiptAlgorithm}`);
             }
 
             const payloadBytes = decodeBase64Url(entry.receiptPayload);
-            const signatureBytes = decodeBase64Url(entry.rowSignature);
-            const key = await keyForKid(entry.signerKeyId);
+            const rebuiltPayloadBytes = buildReceiptPayload(entry);
+            if (!equalBytes(payloadBytes, rebuiltPayloadBytes)) {
+                throw new TokenVerificationError(`Ledger receipt payload mismatch at seq ${entry.seq}`);
+            }
+            const signatureBytes = decodeBase64Url(entry.receiptSignature);
+            const key = await keyForKid(entry.receiptKeyId);
             const verified = await crypto.subtle.verify(
                 "Ed25519",
                 key,
@@ -358,36 +409,33 @@ export class LedgixClient {
             if (!verified) {
                 throw new TokenVerificationError(`Ledger receipt signature invalid at seq ${entry.seq}`);
             }
-
-            const payload = JSON.parse(new TextDecoder().decode(payloadBytes)) as Record<string, unknown>;
-            if (payload.row_hash !== entry.rowHash || payload.prev_row_hash !== entry.prevRowHash || payload.seq !== entry.seq) {
-                throw new TokenVerificationError(`Ledger receipt payload mismatch at seq ${entry.seq}`);
-            }
-
-            previousRowHash = entry.rowHash;
+            latestLeafHash = entry.leafHash;
         }
 
-        const sortedManifests = [...manifests].sort(
-            (a, b) => new Date(a.periodStart).getTime() - new Date(b.periodStart).getTime(),
+        const sortedCheckpoints = [...checkpoints].sort(
+            (a, b) => a.checkpointId - b.checkpointId,
         );
-        let previousManifestHash = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+        let previousCheckpointHash = "";
 
-        for (const manifest of sortedManifests) {
-            if (manifest.prevManifestHash !== previousManifestHash) {
-                throw new TokenVerificationError(`Ledger manifest chain broken at period ${manifest.periodStart}`);
+        for (const checkpoint of sortedCheckpoints) {
+            if (checkpoint.prevCheckpointHash !== previousCheckpointHash) {
+                throw new TokenVerificationError(`Ledger checkpoint chain broken at checkpoint ${checkpoint.checkpointId}`);
             }
-            if (manifest.signatureAlgorithm !== "Ed25519") {
-                throw new TokenVerificationError(`Unsupported manifest signature algorithm ${manifest.signatureAlgorithm}`);
-            }
-
-            const payloadBytes = decodeBase64Url(manifest.manifestPayload);
-            const manifestHash = await sha256Hex(payloadBytes);
-            if (`sha256:${manifestHash}` !== manifest.manifestHash) {
-                throw new TokenVerificationError(`Ledger manifest hash mismatch for period ${manifest.periodStart}`);
+            if (checkpoint.signatureAlgorithm !== "Ed25519") {
+                throw new TokenVerificationError(`Unsupported checkpoint signature algorithm ${checkpoint.signatureAlgorithm}`);
             }
 
-            const signatureBytes = decodeBase64Url(manifest.manifestSignature);
-            const key = await keyForKid(manifest.signerKeyId);
+            const payloadBytes = decodeBase64Url(checkpoint.checkpointPayload);
+            const rebuiltPayloadBytes = buildCheckpointPayload(checkpoint);
+            if (!equalBytes(payloadBytes, rebuiltPayloadBytes)) {
+                throw new TokenVerificationError(`Ledger checkpoint payload mismatch at checkpoint ${checkpoint.checkpointId}`);
+            }
+            const checkpointHash = await hashCheckpointHex(payloadBytes);
+            if (checkpointHash !== checkpoint.checkpointHash) {
+                throw new TokenVerificationError(`Ledger checkpoint hash mismatch at checkpoint ${checkpoint.checkpointId}`);
+            }
+            const signatureBytes = decodeBase64Url(checkpoint.checkpointSignature);
+            const key = await keyForKid(checkpoint.signerKeyId);
             const verified = await crypto.subtle.verify(
                 "Ed25519",
                 key,
@@ -395,27 +443,150 @@ export class LedgixClient {
                 toArrayBuffer(payloadBytes),
             );
             if (!verified) {
-                throw new TokenVerificationError(`Ledger manifest signature invalid for period ${manifest.periodStart}`);
+                throw new TokenVerificationError(`Ledger checkpoint signature invalid at checkpoint ${checkpoint.checkpointId}`);
             }
-
-            previousManifestHash = manifest.manifestHash;
+            previousCheckpointHash = checkpoint.checkpointHash;
         }
 
-        if (sortedEntries.length > 0 && sortedManifests.length > 0) {
-            const latestEntry = sortedEntries[sortedEntries.length - 1];
-            const latestManifest = sortedManifests[sortedManifests.length - 1];
-            if (latestManifest.headSeq < latestEntry.seq) {
-                throw new TokenVerificationError("Latest manifest trails the latest ledger entry");
+        let coverageNote: string | undefined;
+        let latestCheckpointHash: string | null = null;
+        if (sortedCheckpoints.length > 0) {
+            const latestCheckpoint = sortedCheckpoints[sortedCheckpoints.length - 1];
+            latestCheckpointHash = latestCheckpoint.checkpointHash;
+            if (sequencedEntries.length === latestCheckpoint.treeSize) {
+                const root = await merkleRootHex(sequencedEntries.map((entry) => entry.leafHash));
+                if (root !== latestCheckpoint.rootHash) {
+                    throw new TokenVerificationError("Latest checkpoint root does not match sequenced leaf hashes");
+                }
+            } else {
+                coverageNote = `Provided ${sequencedEntries.length} sequenced entries for tree size ${latestCheckpoint.treeSize}; full root verification requires the complete covered set.`;
             }
         }
 
         return LedgerVerificationResultSchema.parse({
             intact: true,
             verifiedEntries: sortedEntries.length,
-            verifiedManifests: sortedManifests.length,
-            latestRowHash: sortedEntries.length ? sortedEntries[sortedEntries.length - 1].rowHash : null,
-            latestManifestHash: sortedManifests.length ? sortedManifests[sortedManifests.length - 1].manifestHash : null,
+            verifiedCheckpoints: sortedCheckpoints.length,
+            verifiedManifests: sortedCheckpoints.length,
+            latestLeafHash,
+            latestCheckpointHash,
+            latestManifestHash: latestCheckpointHash,
+            coverageNote,
         });
+    }
+
+    async verifyLedgerProofBundle(bundle: LedgerProofBundle): Promise<LedgerVerificationResult> {
+        const proofBundle = LedgerProofBundleSchema.parse(bundle);
+        if (proofBundle.keys.length === 0 && !this._jwksCache) {
+            await this.fetchJwks();
+        }
+        const verificationKeys = this._resolveVerificationKeys(proofBundle.keys);
+        if (verificationKeys.length === 0) {
+            throw new TokenVerificationError("No verification keys available for ledger proof bundle");
+        }
+
+        const keyCache = new Map<string, CryptoKey>();
+        const keyForKid = async (kid: string): Promise<CryptoKey> => {
+            if (keyCache.has(kid)) {
+                return keyCache.get(kid)!;
+            }
+            const jwk = verificationKeys.find((item) => item.kid === kid);
+            if (!jwk) {
+                throw new TokenVerificationError(`No JWKS key found for kid ${kid}`);
+            }
+            const imported = await jose.importJWK(jwk as jose.JWK, "EdDSA");
+            keyCache.set(kid, imported as CryptoKey);
+            return imported as CryptoKey;
+        };
+
+        const payloadBytes = decodeBase64Url(proofBundle.event.receiptPayload);
+        const rebuiltReceiptPayload = buildReceiptPayload(proofBundle.event);
+        if (!equalBytes(payloadBytes, rebuiltReceiptPayload)) {
+            throw new TokenVerificationError("Ledger receipt payload mismatch in proof bundle");
+        }
+        const entryKey = await keyForKid(proofBundle.event.receiptKeyId);
+        const receiptOk = await crypto.subtle.verify(
+            "Ed25519",
+            entryKey,
+            toArrayBuffer(decodeBase64Url(proofBundle.event.receiptSignature)),
+            toArrayBuffer(payloadBytes),
+        );
+        if (!receiptOk) {
+            throw new TokenVerificationError("Ledger receipt signature invalid in proof bundle");
+        }
+
+        const checkpointPayload = decodeBase64Url(proofBundle.inclusion.checkpoint.checkpointPayload);
+        const rebuiltCheckpointPayload = buildCheckpointPayload(proofBundle.inclusion.checkpoint);
+        if (!equalBytes(checkpointPayload, rebuiltCheckpointPayload)) {
+            throw new TokenVerificationError("Ledger checkpoint payload mismatch in proof bundle");
+        }
+        const checkpointKey = await keyForKid(proofBundle.inclusion.checkpoint.signerKeyId);
+        const checkpointOk = await crypto.subtle.verify(
+            "Ed25519",
+            checkpointKey,
+            toArrayBuffer(decodeBase64Url(proofBundle.inclusion.checkpoint.checkpointSignature)),
+            toArrayBuffer(checkpointPayload),
+        );
+        if (!checkpointOk) {
+            throw new TokenVerificationError("Ledger checkpoint signature invalid in proof bundle");
+        }
+
+        const inclusionOk = await verifyInclusionProof(
+            proofBundle.event.leafHash,
+            proofBundle.inclusion.leafIndex,
+            proofBundle.inclusion.treeSize,
+            proofBundle.inclusion.path,
+            proofBundle.inclusion.checkpoint.rootHash,
+        );
+        if (!inclusionOk) {
+            throw new TokenVerificationError("Ledger inclusion proof is invalid");
+        }
+
+        if (proofBundle.consistency) {
+            const consistencyOk = await verifyConsistencyProof(
+                proofBundle.consistency.fromCheckpoint.treeSize,
+                proofBundle.consistency.toCheckpoint.treeSize,
+                proofBundle.consistency.fromCheckpoint.rootHash,
+                proofBundle.consistency.toCheckpoint.rootHash,
+                proofBundle.consistency.path,
+            );
+            if (!consistencyOk) {
+                throw new TokenVerificationError("Ledger consistency proof is invalid");
+            }
+        }
+
+        return LedgerVerificationResultSchema.parse({
+            intact: true,
+            verifiedEntries: 1,
+            verifiedCheckpoints: proofBundle.consistency ? 2 : 1,
+            verifiedManifests: proofBundle.consistency ? 2 : 1,
+            latestLeafHash: proofBundle.event.leafHash,
+            latestCheckpointHash: proofBundle.consistency
+                ? proofBundle.consistency.toCheckpoint.checkpointHash
+                : proofBundle.inclusion.checkpoint.checkpointHash,
+            latestManifestHash: proofBundle.consistency
+                ? proofBundle.consistency.toCheckpoint.checkpointHash
+                : proofBundle.inclusion.checkpoint.checkpointHash,
+        });
+    }
+
+    private _resolveVerificationKeys(embeddedKeys: LedgerKeyVersion[] = []): Array<Record<string, unknown>> {
+        const resolved = embeddedKeys.flatMap((keyVersion) => {
+            if (!keyVersion.publicJwk) {
+                return [];
+            }
+            const decoded = decodeBase64Url(keyVersion.publicJwk);
+            const jwk = JSON.parse(new TextDecoder().decode(decoded)) as Record<string, unknown>;
+            if (!("kid" in jwk) || !jwk.kid) {
+                jwk.kid = keyVersion.keyId;
+            }
+            return [jwk];
+        });
+        if (resolved.length > 0) {
+            return resolved;
+        }
+        const jwks = this._jwksCache as { keys?: Record<string, unknown>[] } | null;
+        return Array.isArray(jwks?.keys) ? jwks.keys : [];
     }
 
     // ------------------------------------------------------------------
@@ -443,10 +614,96 @@ function decodeBase64Url(value: string): Uint8Array {
     return bytes;
 }
 
-function toArrayBuffer(value: Uint8Array): ArrayBuffer {
-    const copy = new Uint8Array(value.byteLength);
-    copy.set(value);
-    return copy.buffer;
+function encodeUtf8(value: string): Uint8Array {
+    return new TextEncoder().encode(value);
+}
+
+function encodeDeterministicCbor(value: unknown): Uint8Array {
+    if (value === null) {
+        return Uint8Array.of(0xf6);
+    }
+    if (typeof value === "boolean") {
+        return Uint8Array.of(value ? 0xf5 : 0xf4);
+    }
+    if (typeof value === "string") {
+        const bytes = encodeUtf8(value);
+        return concatBytes(cborHeader(3, bytes.length), bytes);
+    }
+    if (typeof value === "number") {
+        if (!Number.isFinite(value)) {
+            throw new Error(`Unsupported floating-point value ${value}`);
+        }
+        if (Number.isSafeInteger(value)) {
+            return encodeCborInteger(value);
+        }
+        const scratch = new ArrayBuffer(8);
+        new DataView(scratch).setFloat64(0, value, false);
+        return concatBytes(Uint8Array.of(0xfb), new Uint8Array(scratch));
+    }
+    if (Array.isArray(value)) {
+        const items = value.map((item) => encodeDeterministicCbor(item));
+        return concatBytes(cborHeader(4, items.length), ...items);
+    }
+    if (value instanceof Uint8Array) {
+        return concatBytes(cborHeader(2, value.length), value);
+    }
+    if (typeof value === "object") {
+        const entries = Object.entries(value as Record<string, unknown>).sort(([left], [right]) => {
+            if (left.length === right.length) {
+                return left < right ? -1 : left > right ? 1 : 0;
+            }
+            return left.length - right.length;
+        });
+        const encodedEntries = entries.flatMap(([key, item]) => [
+            encodeDeterministicCbor(key),
+            encodeDeterministicCbor(item),
+        ]);
+        return concatBytes(cborHeader(5, entries.length), ...encodedEntries);
+    }
+    throw new Error(`Unsupported CBOR value type: ${typeof value}`);
+}
+
+function encodeCborInteger(value: number): Uint8Array {
+    if (value >= 0) {
+        return cborHeader(0, value);
+    }
+    return cborHeader(1, -(value + 1));
+}
+
+function cborHeader(major: number, value: number): Uint8Array {
+    if (value < 24) {
+        return Uint8Array.of((major << 5) | value);
+    }
+    if (value <= 0xff) {
+        return Uint8Array.of((major << 5) | 24, value);
+    }
+    if (value <= 0xffff) {
+        const scratch = new Uint8Array(3);
+        scratch[0] = (major << 5) | 25;
+        new DataView(scratch.buffer).setUint16(1, value, false);
+        return scratch;
+    }
+    if (value <= 0xffffffff) {
+        const scratch = new Uint8Array(5);
+        scratch[0] = (major << 5) | 26;
+        new DataView(scratch.buffer).setUint32(1, value, false);
+        return scratch;
+    }
+    const scratch = new Uint8Array(9);
+    scratch[0] = (major << 5) | 27;
+    new DataView(scratch.buffer).setBigUint64(1, BigInt(value), false);
+    return scratch;
+}
+
+function concatBytes(...parts: Uint8Array[]): Uint8Array {
+    const size = parts.reduce((sum, part) => sum + part.length, 0);
+    const result = new Uint8Array(size);
+    let offset = 0;
+    for (const part of parts) {
+        result.set(part, offset);
+        offset += part.length;
+    }
+    return result;
 }
 
 async function sha256Hex(value: Uint8Array): Promise<string> {
@@ -454,4 +711,193 @@ async function sha256Hex(value: Uint8Array): Promise<string> {
     return Array.from(new Uint8Array(digest))
         .map((item) => item.toString(16).padStart(2, "0"))
         .join("");
+}
+
+async function hashEventHex(payload: Uint8Array): Promise<string> {
+    return sha256Hex(concatBytes(encodeUtf8("ledgix.audit.event.v1\0"), payload));
+}
+
+async function hashCheckpointHex(payload: Uint8Array): Promise<string> {
+    return sha256Hex(concatBytes(encodeUtf8("ledgix.audit.checkpoint.v1\0"), payload));
+}
+
+async function hashLeafHex(eventHash: string): Promise<string> {
+    return sha256Hex(concatBytes(Uint8Array.of(0x00), hexToBytes(eventHash)));
+}
+
+async function hashNodeHex(leftHash: string, rightHash: string): Promise<string> {
+    return sha256Hex(concatBytes(Uint8Array.of(0x01), hexToBytes(leftHash), hexToBytes(rightHash)));
+}
+
+async function buildEventHash(entry: LedgerEntry): Promise<string> {
+    const payload = encodeDeterministicCbor({
+        accepted_at: entry.acceptedAt,
+        agent_id: entry.agentId,
+        approved: entry.approved,
+        canonical_version: entry.canonicalVersion,
+        citations: entry.citations,
+        confidence: entry.confidence,
+        event_uuid: entry.eventUuid,
+        evidence_chunks: entry.evidenceChunks,
+        intent_hash: entry.intentHash,
+        policy_id: entry.policyId,
+        reason: entry.reason,
+        request_id: entry.requestId,
+        tool_args: entry.toolArgs,
+        tool_name: entry.toolName,
+    });
+    return hashEventHex(payload);
+}
+
+function buildReceiptPayload(entry: LedgerEntry): Uint8Array {
+    return encodeDeterministicCbor({
+        accepted_at: entry.acceptedAt,
+        event_hash: entry.eventHash,
+        event_uuid: entry.eventUuid,
+        leaf_hash: entry.leafHash,
+        receipt_key_id: entry.receiptKeyId,
+        request_id: entry.requestId,
+        type: "event_receipt",
+        version: 1,
+    });
+}
+
+function buildCheckpointPayload(checkpoint: LedgerCheckpoint): Uint8Array {
+    return encodeDeterministicCbor({
+        export_targets: checkpoint.exportTarget ? [checkpoint.exportTarget] : [],
+        key_id: checkpoint.signerKeyId,
+        mmd_seconds: checkpoint.mmdSeconds,
+        prev_checkpoint_hash: checkpoint.prevCheckpointHash,
+        root_hash: checkpoint.rootHash,
+        signed_at: checkpoint.signedAt,
+        tree_size: checkpoint.treeSize,
+        type: "checkpoint",
+        version: 1,
+    });
+}
+
+async function merkleRootHex(leafHashes: string[]): Promise<string> {
+    if (leafHashes.length === 0) {
+        return "";
+    }
+    return merkleRangeHash(leafHashes, 0, leafHashes.length);
+}
+
+async function merkleRangeHash(leafHashes: string[], start: number, size: number): Promise<string> {
+    if (size === 1) {
+        return leafHashes[start];
+    }
+    const k = largestPowerOfTwoLessThan(size);
+    const left = await merkleRangeHash(leafHashes, start, k);
+    const right = await merkleRangeHash(leafHashes, start + k, size - k);
+    return hashNodeHex(left, right);
+}
+
+function largestPowerOfTwoLessThan(size: number): number {
+    let power = 1;
+    while ((power << 1) < size) {
+        power <<= 1;
+    }
+    return power;
+}
+
+async function verifyInclusionProof(
+    leafHash: string,
+    leafIndex: number,
+    treeSize: number,
+    path: string[],
+    rootHash: string,
+): Promise<boolean> {
+    let fn = leafIndex;
+    let sn = treeSize - 1;
+    let hash = leafHash;
+    for (const sibling of path) {
+        if (sn === 0) {
+            return false;
+        }
+        if (fn % 2 === 1 || fn === sn) {
+            hash = await hashNodeHex(sibling, hash);
+            while (fn > 0 && fn % 2 === 0) {
+                fn >>= 1;
+                sn >>= 1;
+            }
+        } else {
+            hash = await hashNodeHex(hash, sibling);
+        }
+        fn >>= 1;
+        sn >>= 1;
+    }
+    return hash === rootHash && sn === 0;
+}
+
+async function verifyConsistencyProof(
+    firstSize: number,
+    secondSize: number,
+    firstHash: string,
+    secondHash: string,
+    path: string[],
+): Promise<boolean> {
+    if (firstSize === secondSize) {
+        return firstHash === secondHash;
+    }
+    if (path.length === 0) {
+        return false;
+    }
+    const working = isPowerOfTwo(firstSize) ? [firstHash, ...path] : [...path];
+    let fn = firstSize - 1;
+    let sn = secondSize - 1;
+    while ((fn & 1) === 1) {
+        fn >>= 1;
+        sn >>= 1;
+    }
+    let firstRoot = working[0];
+    let secondRoot = working[0];
+    for (const candidate of working.slice(1)) {
+        if (sn === 0) {
+            return false;
+        }
+        if ((fn & 1) === 1 || fn === sn) {
+            firstRoot = await hashNodeHex(candidate, firstRoot);
+            secondRoot = await hashNodeHex(candidate, secondRoot);
+            while (fn > 0 && (fn & 1) === 0) {
+                fn >>= 1;
+                sn >>= 1;
+            }
+        } else {
+            secondRoot = await hashNodeHex(secondRoot, candidate);
+        }
+        fn >>= 1;
+        sn >>= 1;
+    }
+    return firstRoot === firstHash && secondRoot === secondHash && sn === 0;
+}
+
+function isPowerOfTwo(value: number): boolean {
+    return value > 0 && (value & (value - 1)) === 0;
+}
+
+function hexToBytes(value: string): Uint8Array {
+    const bytes = new Uint8Array(value.length / 2);
+    for (let index = 0; index < bytes.length; index += 1) {
+        bytes[index] = Number.parseInt(value.slice(index * 2, index * 2 + 2), 16);
+    }
+    return bytes;
+}
+
+function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
+    if (left.length !== right.length) {
+        return false;
+    }
+    for (let index = 0; index < left.length; index += 1) {
+        if (left[index] !== right[index]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+function toArrayBuffer(value: Uint8Array): ArrayBuffer {
+    const copy = new Uint8Array(value.byteLength);
+    copy.set(value);
+    return copy.buffer;
 }
