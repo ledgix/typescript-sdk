@@ -2,43 +2,65 @@
 // Wraps LlamaIndex tools with Vault clearance enforcement
 
 import type { LedgixClient } from "../client.js";
+import { _getDefaultClient } from "../enforce.js";
 import type { ClearanceRequest } from "../models.js";
 
 /**
  * Wraps a LlamaIndex-style tool function with Vault clearance enforcement.
  *
- * Since LlamaIndex.ts has a different API surface than the Python version,
- * this adapter wraps the underlying function rather than the FunctionTool class.
- *
- * Usage:
+ * Usage with explicit client:
  * ```ts
  * import { wrapTool } from "ledgix-ts/adapters/llamaindex";
  *
  * const guardedFn = wrapTool(client, "search", mySearchFn, { policyId: "search-policy" });
  * ```
+ *
+ * Usage after {@link configure}:
+ * ```ts
+ * const guardedFn = wrapTool("search", mySearchFn, { policyId: "search-policy" });
+ * ```
  */
 export function wrapTool(
-    client: LedgixClient,
-    toolName: string,
-    toolFn: (args: Record<string, unknown>) => Promise<unknown>,
+    clientOrToolName: LedgixClient | string,
+    toolNameOrFn: string | ((args: Record<string, unknown>) => Promise<unknown>),
+    toolFnOrOptions?:
+        | ((args: Record<string, unknown>) => Promise<unknown>)
+        | { policyId?: string },
     options?: { policyId?: string },
 ): (args: Record<string, unknown>) => Promise<unknown> {
+    let client: LedgixClient | undefined;
+    let toolName: string;
+    let toolFn: (args: Record<string, unknown>) => Promise<unknown>;
+    let opts: { policyId?: string } | undefined;
+
+    if (typeof clientOrToolName === "string") {
+        toolName = clientOrToolName;
+        toolFn = toolNameOrFn as (args: Record<string, unknown>) => Promise<unknown>;
+        opts = toolFnOrOptions as { policyId?: string } | undefined;
+    } else {
+        client = clientOrToolName;
+        toolName = toolNameOrFn as string;
+        toolFn = toolFnOrOptions as (args: Record<string, unknown>) => Promise<unknown>;
+        opts = options;
+    }
+
     return async (args: Record<string, unknown>): Promise<unknown> => {
+        const resolvedClient = client ?? _getDefaultClient();
         const ctx: Record<string, unknown> = {};
-        if (options?.policyId) {
-            ctx.policy_id = options.policyId;
+        if (opts?.policyId) {
+            ctx.policy_id = opts.policyId;
         }
 
         const request: ClearanceRequest = {
             toolName,
             toolArgs: args,
-            agentId: client.config.agentId,
-            sessionId: client.config.sessionId,
+            agentId: resolvedClient.config.agentId,
+            sessionId: resolvedClient.config.sessionId,
             context: ctx,
         };
 
         // Will throw ClearanceDeniedError if denied
-        await client.requestClearance(request);
+        await resolvedClient.requestClearance(request);
         return toolFn(args);
     };
 }

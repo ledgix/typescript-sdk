@@ -1,7 +1,19 @@
 // Ledgix ALCV — TypeScript SDK
 // Agent-agnostic compliance shim for SOX 404 policy enforcement
 //
-// Usage:
+// Recommended usage:
+//   import { configure, enforce, currentToken } from "ledgix-ts";
+//
+//   configure({ agentId: "finance-agent" });
+//
+//   const createPayment = enforce({ toolName: "create_stripe_payment" })(
+//     async (amount: number, customerId: string) => {
+//       const token = currentToken();
+//       // ...
+//     }
+//   );
+//
+// Explicit API (advanced):
 //   import { LedgixClient, vaultEnforce } from "ledgix-ts";
 //
 //   const client = new LedgixClient();
@@ -16,8 +28,15 @@
 export { LedgixClient } from "./client.js";
 export { createVaultConfig } from "./config.js";
 export type { VaultConfig } from "./config.js";
-export { vaultEnforce, withVaultContext } from "./enforce.js";
-export type { VaultEnforceOptions, VaultContextOptions } from "./enforce.js";
+export {
+    configure,
+    enforce,
+    currentClearance,
+    currentToken,
+    vaultEnforce,
+    withVaultContext,
+} from "./enforce.js";
+export type { EnforceOptions, VaultEnforceOptions, VaultContextOptions } from "./enforce.js";
 export {
     ClearanceDeniedError,
     ManualReviewTimeoutError,

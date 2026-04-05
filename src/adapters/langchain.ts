@@ -2,26 +2,35 @@
 // Provides a callback handler and tool wrapper for LangChain integration
 
 import type { LedgixClient } from "../client.js";
+import { _getDefaultClient } from "../enforce.js";
 import type { ClearanceRequest } from "../models.js";
 
 /**
  * LangChain callback handler that intercepts tool calls for Vault clearance.
  *
- * Usage:
+ * Usage with explicit client:
  * ```ts
  * import { LedgixCallbackHandler } from "ledgix-ts/adapters/langchain";
  *
  * const handler = new LedgixCallbackHandler(client);
- * // Use handler.handleToolStart() in your callback chain
+ * ```
+ *
+ * Usage after {@link configure}:
+ * ```ts
+ * const handler = new LedgixCallbackHandler();
  * ```
  */
 export class LedgixCallbackHandler {
-    private client: LedgixClient;
+    private _client?: LedgixClient;
     private policyId?: string;
 
-    constructor(client: LedgixClient, options?: { policyId?: string }) {
-        this.client = client;
+    constructor(client?: LedgixClient, options?: { policyId?: string }) {
+        this._client = client;
         this.policyId = options?.policyId;
+    }
+
+    private get client(): LedgixClient {
+        return this._client ?? _getDefaultClient();
     }
 
     async handleToolStart(
@@ -57,34 +66,59 @@ export class LedgixCallbackHandler {
 /**
  * Wraps a LangChain tool function with Vault clearance enforcement.
  *
- * Usage:
+ * Usage with explicit client:
  * ```ts
  * import { wrapLangChainTool } from "ledgix-ts/adapters/langchain";
  *
  * const guardedTool = wrapLangChainTool(client, "search", originalFn, { policyId: "search-policy" });
  * ```
+ *
+ * Usage after {@link configure}:
+ * ```ts
+ * const guardedTool = wrapLangChainTool("search", originalFn, { policyId: "search-policy" });
+ * ```
  */
 export function wrapLangChainTool(
-    client: LedgixClient,
-    toolName: string,
-    toolFn: (args: Record<string, unknown>) => Promise<unknown>,
+    clientOrToolName: LedgixClient | string,
+    toolNameOrFn: string | ((args: Record<string, unknown>) => Promise<unknown>),
+    toolFnOrOptions?:
+        | ((args: Record<string, unknown>) => Promise<unknown>)
+        | { policyId?: string },
     options?: { policyId?: string },
 ): (args: Record<string, unknown>) => Promise<unknown> {
+    let client: LedgixClient | undefined;
+    let toolName: string;
+    let toolFn: (args: Record<string, unknown>) => Promise<unknown>;
+    let opts: { policyId?: string } | undefined;
+
+    if (typeof clientOrToolName === "string") {
+        // No explicit client — use global
+        toolName = clientOrToolName;
+        toolFn = toolNameOrFn as (args: Record<string, unknown>) => Promise<unknown>;
+        opts = toolFnOrOptions as { policyId?: string } | undefined;
+    } else {
+        client = clientOrToolName;
+        toolName = toolNameOrFn as string;
+        toolFn = toolFnOrOptions as (args: Record<string, unknown>) => Promise<unknown>;
+        opts = options;
+    }
+
     return async (args: Record<string, unknown>): Promise<unknown> => {
+        const resolvedClient = client ?? _getDefaultClient();
         const ctx: Record<string, unknown> = {};
-        if (options?.policyId) {
-            ctx.policy_id = options.policyId;
+        if (opts?.policyId) {
+            ctx.policy_id = opts.policyId;
         }
 
         const request: ClearanceRequest = {
             toolName,
             toolArgs: args,
-            agentId: client.config.agentId,
-            sessionId: client.config.sessionId,
+            agentId: resolvedClient.config.agentId,
+            sessionId: resolvedClient.config.sessionId,
             context: ctx,
         };
 
-        await client.requestClearance(request);
+        await resolvedClient.requestClearance(request);
         return toolFn(args);
     };
 }
