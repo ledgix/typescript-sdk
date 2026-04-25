@@ -169,7 +169,17 @@ export function autoInstrument<T extends Record<string, unknown>>(
  */
 export function tool<TArgs extends unknown[], TReturn>(
     fn: (...args: TArgs) => Promise<TReturn>,
-    options?: { toolName?: string; policyId?: string; context?: Record<string, unknown> },
+    options?: {
+        toolName?: string;
+        policyId?: string;
+        context?: Record<string, unknown>;
+        // Phase 2 — GDPR Article 30 processing-register matching.
+        dataCategories?: string[];
+        purpose?: string;
+        processingRegisterRef?: string;
+        // Phase 6 — dataset lineage.
+        datasetRef?: string;
+    },
 ): (...args: TArgs) => Promise<TReturn> {
     const name = options?.toolName ?? fn.name ?? "unknown_tool";
     let policyId = options?.policyId;
@@ -183,7 +193,15 @@ export function tool<TArgs extends unknown[], TReturn>(
         }
     }
 
-    return enforce({ toolName: name, policyId, context })(fn);
+    return enforce({
+        toolName: name,
+        policyId,
+        context,
+        dataCategories: options?.dataCategories,
+        purpose: options?.purpose,
+        processingRegisterRef: options?.processingRegisterRef,
+        datasetRef: options?.datasetRef,
+    })(fn);
 }
 
 /** @internal */
@@ -218,6 +236,18 @@ export interface EnforceOptions {
      * (e.g. minified bundles).
      */
     argsExtractor?: (args: unknown[]) => Record<string, unknown>;
+    // Phase 2 — GDPR Article 30 processing-register matching. When supplied,
+    // the Vault's pre-LLM validator chain checks for an active register that
+    // covers the requested (data_categories, purpose, recipient) tuple.
+    /** Personal-data categories this action will touch. */
+    dataCategories?: string[];
+    /** Purpose of processing (e.g. 'fraud_detection', 'billing'). */
+    purpose?: string;
+    /** Optional UUID hint of the matching register. */
+    processingRegisterRef?: string;
+    // Phase 6 — dataset lineage.
+    /** Logical dataset ref this action reads/writes. */
+    datasetRef?: string;
 }
 
 /**
@@ -267,6 +297,10 @@ export function enforce(
                 agentId: client.config.agentId,
                 sessionId: client.config.sessionId,
                 context: ctx,
+                dataCategories: options?.dataCategories,
+                purpose: options?.purpose,
+                processingRegisterRef: options?.processingRegisterRef,
+                datasetRef: options?.datasetRef,
             };
 
             const clearance = await client.requestClearance(request);
@@ -305,6 +339,11 @@ export interface VaultEnforceOptions {
      * @returns A plain object mapping argument names to values.
      */
     argsExtractor?: (args: unknown[]) => Record<string, unknown>;
+    // Phase 2 / 6 — see EnforceOptions for full docs.
+    dataCategories?: string[];
+    purpose?: string;
+    processingRegisterRef?: string;
+    datasetRef?: string;
 }
 
 /**
@@ -351,6 +390,10 @@ export function vaultEnforce(
                 agentId: client.config.agentId,
                 sessionId: client.config.sessionId,
                 context: ctx,
+                dataCategories: options?.dataCategories,
+                purpose: options?.purpose,
+                processingRegisterRef: options?.processingRegisterRef,
+                datasetRef: options?.datasetRef,
             };
 
             const clearance = await client.requestClearance(request);
@@ -374,6 +417,11 @@ export interface VaultContextOptions {
     policyId?: string;
     /** Additional context for the clearance request. */
     context?: Record<string, unknown>;
+    // Phase 2 / 6 — see EnforceOptions for full docs.
+    dataCategories?: string[];
+    purpose?: string;
+    processingRegisterRef?: string;
+    datasetRef?: string;
 }
 
 /**
@@ -410,6 +458,10 @@ export async function withVaultContext<T>(
         agentId: client.config.agentId,
         sessionId: client.config.sessionId,
         context: ctx,
+        dataCategories: options.dataCategories,
+        purpose: options.purpose,
+        processingRegisterRef: options.processingRegisterRef,
+        datasetRef: options.datasetRef,
     };
 
     const clearance = await client.requestClearance(request);

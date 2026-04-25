@@ -367,6 +367,10 @@ export class LedgixClient {
             destination_uri: request.destinationUri ?? "",
             destination_provider: request.destinationProvider ?? "",
             destination_account_ref: request.destinationAccountRef ?? "",
+            data_categories: request.dataCategories ?? [],
+            purpose: request.purpose ?? "",
+            processing_register_ref: request.processingRegisterRef ?? "",
+            dataset_ref: request.datasetRef ?? "",
         };
 
         const response = await this._fetch("/mint-token", {

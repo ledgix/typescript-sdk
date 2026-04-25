@@ -12,6 +12,12 @@ import type { PendingApproval } from "../pending.js";
 export interface BuildRequestOptions {
     policyId?: string;
     extraContext?: Record<string, unknown>;
+    // Phase 2 — GDPR Article 30 processing-register matching.
+    dataCategories?: string[];
+    purpose?: string;
+    processingRegisterRef?: string;
+    // Phase 6 — dataset lineage.
+    datasetRef?: string;
 }
 
 export function resolveClient(client?: LedgixClient): LedgixClient {
@@ -34,6 +40,10 @@ export function buildClearanceRequest(
         agentId: client.config.agentId,
         sessionId: client.config.sessionId,
         context,
+        dataCategories: opts?.dataCategories,
+        purpose: opts?.purpose,
+        processingRegisterRef: opts?.processingRegisterRef,
+        datasetRef: opts?.datasetRef,
     };
 }
 

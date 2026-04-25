@@ -52,6 +52,37 @@ describe("ClearanceRequestSchema", () => {
         const parsed = ClearanceRequestSchema.parse(original);
         expect(parsed).toEqual(original);
     });
+
+    it("Phase 2 (0.3.1): processing-register fields round-trip and default to undefined", () => {
+        const req = ClearanceRequestSchema.parse({
+            toolName: "customer_export",
+            dataCategories: ["customer_email", "transaction_amount"],
+            purpose: "billing",
+            processingRegisterRef: "00000000-0000-0000-0000-000000000001",
+        });
+        expect(req.dataCategories).toEqual(["customer_email", "transaction_amount"]);
+        expect(req.purpose).toBe("billing");
+        expect(req.processingRegisterRef).toBe("00000000-0000-0000-0000-000000000001");
+
+        const bare = ClearanceRequestSchema.parse({ toolName: "x" });
+        expect(bare.dataCategories).toBeUndefined();
+        expect(bare.purpose).toBeUndefined();
+        expect(bare.processingRegisterRef).toBeUndefined();
+    });
+
+    it("Phase 6 (0.3.1): datasetRef round-trips and converts to dataset_ref on the wire", () => {
+        const req = ClearanceRequestSchema.parse({
+            toolName: "kb_search",
+            datasetRef: "prod_customer_support_kb",
+        });
+        expect(req.datasetRef).toBe("prod_customer_support_kb");
+
+        const wire = toSnakeCaseKeys(req as unknown as Record<string, unknown>);
+        expect((wire as Record<string, unknown>).dataset_ref).toBe("prod_customer_support_kb");
+
+        const bare = ClearanceRequestSchema.parse({ toolName: "x" });
+        expect(bare.datasetRef).toBeUndefined();
+    });
 });
 
 // ──────────────────────────────────────────────────────────────────────

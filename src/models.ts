@@ -41,6 +41,30 @@ export const ClearanceRequestSchema = z.object({
         .string()
         .optional()
         .describe("Account/org/workspace ref within the provider (e.g. Stripe acct id, Slack team id)"),
+    // Phase 2 — GDPR Article 30 processing-register matching.
+    // When supplied, the Vault's pre-LLM validator chain checks for an active
+    // processing register that covers (data_categories ⊇ requested,
+    // purpose ∈ register.purposes, recipient ∈ register.recipients). Unmatched
+    // requests are denied with reason_code='processing_no_register_match'.
+    dataCategories: z
+        .array(z.string())
+        .optional()
+        .describe("Personal-data categories this action will touch (e.g. ['customer_email','transaction_amount'])"),
+    purpose: z
+        .string()
+        .optional()
+        .describe("Purpose of processing (e.g. 'fraud_detection', 'billing'); must be in matched register's purposes"),
+    processingRegisterRef: z
+        .string()
+        .optional()
+        .describe("Optional UUID hint of which register this action anchors to; Vault still does authoritative match"),
+    // Phase 6 — dataset lineage. When supplied, dataset sheets auto-derive
+    // row counts, schema fingerprints, and consent-basis breakdowns from
+    // ledger replay scoped to events with this ref.
+    datasetRef: z
+        .string()
+        .optional()
+        .describe("Logical dataset reference this action reads/writes (e.g. 'prod_customer_support_kb', S3 path, table name)"),
 });
 
 /** Schema for the clearance response from the Vault. */
