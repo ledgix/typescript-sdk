@@ -72,15 +72,25 @@ const ClearanceStatusSchema = z
     .enum(["processing", "approved", "denied", "pending_review", "pendingReview"])
     .transform((value) => (value === "pending_review" ? "pendingReview" : value));
 
+/** Categorical confidence buckets — replaces the legacy decimal confidence
+ * (0.00–1.00) in v1.0. Ordered from strongest to weakest signal. */
+export const ConfidenceBucketSchema = z.enum(["extra_high", "high", "medium", "low", "none"]);
+export type ConfidenceBucket = z.infer<typeof ConfidenceBucketSchema>;
+
+/** Three explicit decision states — replaces the overloaded
+ * `approved=true + confidence=0.00` sentinel encoding. */
+export const DecisionStatusSchema = z.enum(["approved", "denied", "approved_pending_review"]);
+export type DecisionStatus = z.infer<typeof DecisionStatusSchema>;
+
 export const ClearanceResponseSchema = z.object({
-    status: ClearanceStatusSchema.default("denied").describe("Decision state"),
-    approved: z.boolean().describe("Whether the tool call was approved"),
+    status: ClearanceStatusSchema.default("denied").describe("Vault lifecycle status"),
+    decisionStatus: DecisionStatusSchema.default("denied").describe("Categorical decision: approved | denied | approved_pending_review"),
     requiresManualReview: z.boolean().default(false).describe("Whether manual review is required"),
     token: z.string().nullable().default(null).describe("Signed A-JWT if approved, null if denied"),
     reason: z.string().default("").describe("Human-readable explanation of the decision"),
     requestId: z.string().default("").describe("Vault-assigned unique ID for this request"),
-    confidence: z.number().min(0).max(1).default(0).describe("Judge confidence score"),
-    minimumConfidenceScore: z.number().min(0).max(1).default(0).describe("Client minimum confidence score"),
+    confidenceBucket: ConfidenceBucketSchema.default("none").describe("Categorical confidence: extra_high | high | medium | low | none"),
+    minimumConfidenceBucket: ConfidenceBucketSchema.default("high").describe("Client-configured minimum confidence bucket"),
     policyVersionId: z.string().nullable().default(null).describe("Policy version the decision was evaluated against"),
     policyContentHash: z.string().nullable().default(null).describe("Content hash of the policy version"),
     reasonCode: z.string().nullable().default(null).describe("Machine-readable denial code, e.g. 'spend_cap_exceeded'"),
@@ -119,8 +129,12 @@ export const LedgerEntrySchema = z.object({
     reason: z.string().default(""),
     citations: z.array(z.record(z.unknown())).default([]),
     evidenceChunks: z.array(z.record(z.unknown())).default([]),
-    confidence: z.number().default(0),
-    approved: z.boolean(),
+    // Legacy float kept for canonical_version=1 hash verification of old rows.
+    // canonical_version>=2 events also carry confidenceBucket and decisionStatus.
+    confidence: z.number().default(0).describe("Legacy bucket midpoint; prefer confidenceBucket"),
+    confidenceBucket: ConfidenceBucketSchema.nullable().optional().describe("Populated for canonical_version>=2 events"),
+    decisionStatus: DecisionStatusSchema.nullable().optional().describe("Populated for canonical_version>=2 events"),
+    approved: z.boolean().default(false).describe("Legacy boolean; prefer decisionStatus"),
     acceptedAt: z.string(),
     canonicalVersion: z.number().int().default(1),
     eventHash: z.string(),

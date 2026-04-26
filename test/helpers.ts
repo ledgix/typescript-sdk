@@ -106,7 +106,7 @@ export function createRetryTestClient(maxRetries = 2): LedgixClient {
 export function approvedResponse(token: string) {
     return {
         status: "approved",
-        approved: true,
+        decisionStatus: "approved",
         token,
         reason: "Policy check passed",
         request_id: "req-001",
@@ -116,7 +116,7 @@ export function approvedResponse(token: string) {
 export function deniedResponse() {
     return {
         status: "denied",
-        approved: false,
+        decisionStatus: "denied",
         token: null,
         reason: "Amount exceeds $100 limit",
         request_id: "req-002",

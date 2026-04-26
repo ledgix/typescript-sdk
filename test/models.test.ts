@@ -92,34 +92,34 @@ describe("ClearanceRequestSchema", () => {
 describe("ClearanceResponseSchema", () => {
     it("should parse approved response", () => {
         const resp = ClearanceResponseSchema.parse({
-            approved: true,
+            decisionStatus: "approved",
             token: "eyJ...",
             reason: "All good",
             requestId: "req-1",
         });
-        expect(resp.approved).toBe(true);
+        expect(resp.decisionStatus).toBe("approved");
         expect(resp.token).toBe("eyJ...");
     });
 
     it("should parse denied response with defaults", () => {
         const resp = ClearanceResponseSchema.parse({
-            approved: false,
+            decisionStatus: "denied",
             reason: "Policy violation",
             requestId: "req-2",
         });
-        expect(resp.approved).toBe(false);
+        expect(resp.decisionStatus).toBe("denied");
         expect(resp.token).toBeNull();
     });
 
     it("should parse from plain object", () => {
         const data = {
-            approved: true,
+            decisionStatus: "approved",
             token: "abc",
             reason: "ok",
             requestId: "r1",
         };
         const resp = ClearanceResponseSchema.parse(data);
-        expect(resp.approved).toBe(true);
+        expect(resp.decisionStatus).toBe("approved");
     });
 
     it("should default policyVersionId and policyContentHash to null", () => {
@@ -130,7 +130,7 @@ describe("ClearanceResponseSchema", () => {
 
     it("should parse policy version metadata from wire payload", () => {
         const wire = toCamelCaseKeys({
-            approved: true,
+            decisionStatus: "approved",
             token: "tok",
             request_id: "r1",
             policy_version_id: "3b6b2e1d-9d7d-4a32-9f6e-54a4b0ee8e11",

@@ -202,7 +202,7 @@ describe("withVaultContext", () => {
             { amount: 45 },
             {},
             async (clearance) => {
-                expect(clearance.approved).toBe(true);
+                expect(clearance.decisionStatus).toBe("approved");
                 expect(clearance.token).not.toBeNull();
                 return "success";
             },

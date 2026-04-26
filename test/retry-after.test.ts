@@ -84,7 +84,7 @@ describe("LedgixClient — 429 + Retry-After backpressure", () => {
         );
 
         const result = await client.requestClearance(sampleRequest);
-        expect(result.approved).toBe(true);
+        expect(result.decisionStatus).toBe("approved");
 
         // Exactly one sleep, of ~2000ms (Retry-After: 2 seconds).
         expect(sleeps.some((s) => Math.abs(s - 2000) < 1)).toBe(true);
@@ -105,7 +105,7 @@ describe("LedgixClient — 429 + Retry-After backpressure", () => {
         );
 
         const result = await client.requestClearance(sampleRequest);
-        expect(result.approved).toBe(true);
+        expect(result.decisionStatus).toBe("approved");
         expect(sleeps.length).toBeGreaterThanOrEqual(1);
     });
 
@@ -135,7 +135,7 @@ describe("LedgixClient — 429 + Retry-After backpressure", () => {
         );
 
         const result = await client.requestClearance(sampleRequest);
-        expect(result.approved).toBe(true);
+        expect(result.decisionStatus).toBe("approved");
         // Three 429-driven sleeps before success.
         expect(sleeps.length).toBeGreaterThanOrEqual(3);
     });
@@ -198,7 +198,7 @@ describe("LedgixClient — 429 + Retry-After backpressure", () => {
         );
 
         const result = await client.requestClearance(sampleRequest);
-        expect(result.approved).toBe(true);
+        expect(result.decisionStatus).toBe("approved");
         // Should have slept (jitter fallback path), but not for any wall-clock
         // value derived from the date header.
         expect(sleeps.length).toBeGreaterThanOrEqual(1);

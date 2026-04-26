@@ -57,7 +57,7 @@ describe("LedgixClient.requestClearance", () => {
         };
 
         const result = await client.requestClearance(request);
-        expect(result.approved).toBe(true);
+        expect(result.decisionStatus).toBe("approved");
         expect(result.token).not.toBeNull();
         expect(result.requestId).toBe("req-001");
     });
@@ -185,12 +185,12 @@ describe("LedgixClient.requestClearance", () => {
                 return HttpResponse.json(
                     {
                         status: "processing",
-                        approved: false,
+                        decisionStatus: "denied",
                         token: null,
                         reason: "Queued",
                         request_id: "req-processing-001",
                         confidence: 0,
-                        minimum_confidence_score: 0.8,
+                        minimumConfidenceBucket: "medium",
                     },
                     { status: 202 },
                 );
@@ -209,7 +209,7 @@ describe("LedgixClient.requestClearance", () => {
         };
 
         const result = await client.requestClearance(request);
-        expect(result.approved).toBe(true);
+        expect(result.decisionStatus).toBe("approved");
         expect(result.requestId).toBe("req-processing-001");
     });
 });
@@ -284,8 +284,8 @@ describe("LedgixClient.verifyLedgerProof", () => {
             reason: "approved",
             citations: [],
             evidenceChunks: [],
-            confidence: 0.91,
-            approved: true,
+            confidenceBucket: "high",
+            decisionStatus: "approved",
             acceptedAt: "2026-03-15T12:00:00Z",
             canonicalVersion: 1,
             eventHash: "",
@@ -373,8 +373,8 @@ describe("LedgixClient.verifyLedgerProof", () => {
             reason: "approved",
             citations: [],
             evidenceChunks: [],
-            confidence: 0.91,
-            approved: true,
+            confidenceBucket: "high",
+            decisionStatus: "approved",
             acceptedAt: "2026-03-15T12:00:00Z",
             canonicalVersion: 1,
             eventHash: "",
@@ -576,13 +576,33 @@ async function sha256HexForTest(value: Uint8Array): Promise<string> {
 }
 
 async function buildEventHashForTest(entry: LedgerEntry): Promise<string> {
+    // Mirrors the canonical_version=1 hash schema in vault/internal/ledger/ledger.go
+    // (buildEventPayload). Confidence is the legacy float column (the bucket
+    // midpoint for new rows, untouched for legacy rows). When the test fixture
+    // populates confidenceBucket without an explicit confidence, we derive
+    // the float from the bucket so the hash matches what vault would emit.
+    const bucketToFloat: Record<string, number> = {
+        extra_high: 0.95,
+        high: 0.85,
+        medium: 0.6,
+        low: 0.2,
+        none: 0,
+    };
+    const confidence =
+        entry.confidence ??
+        (entry.confidenceBucket ? bucketToFloat[entry.confidenceBucket] ?? 0 : 0);
+    const approved =
+        entry.approved ??
+        (entry.decisionStatus
+            ? entry.decisionStatus === "approved" || entry.decisionStatus === "approved_pending_review"
+            : false);
     const payload = encodeDeterministicCborForTest({
         accepted_at: entry.acceptedAt,
         agent_id: entry.agentId,
-        approved: entry.approved,
+        approved,
         canonical_version: entry.canonicalVersion,
         citations: normalizeJSONNumbersForTestCbor(entry.citations),
-        confidence: entry.confidence,
+        confidence,
         event_uuid: entry.eventUuid,
         evidence_chunks: normalizeJSONNumbersForTestCbor(entry.evidenceChunks),
         intent_hash: entry.intentHash,
@@ -746,7 +766,7 @@ describe("LedgixClient token verification", () => {
         };
 
         const result = await clientWithJwt.requestClearance(request);
-        expect(result.approved).toBe(true);
+        expect(result.decisionStatus).toBe("approved");
     });
 });
 
@@ -784,7 +804,7 @@ describe("LedgixClient retry", () => {
         };
 
         const result = await client.requestClearance(request);
-        expect(result.approved).toBe(true);
+        expect(result.decisionStatus).toBe("approved");
         expect(callCount).toBe(3);
     });
 
@@ -809,7 +829,7 @@ describe("LedgixClient retry", () => {
         };
 
         const result = await client.requestClearance(request);
-        expect(result.approved).toBe(true);
+        expect(result.decisionStatus).toBe("approved");
         expect(callCount).toBe(2);
     });
 

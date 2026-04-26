@@ -294,7 +294,7 @@ export class LedgixClient {
 
     private static _isCacheable(clearance: ClearanceResponse): boolean {
         return (
-            clearance.approved === true &&
+            clearance.decisionStatus === "approved" &&
             clearance.status === "approved" &&
             Boolean(clearance.policyVersionId) &&
             clearance.token != null
@@ -338,12 +338,12 @@ export class LedgixClient {
 
     private _makeEnvelope(clearance: ClearanceResponse): DecisionEnvelope {
         return {
-            approved: clearance.approved,
+            decisionStatus: clearance.decisionStatus,
             reason: clearance.reason,
             policyVersionId: clearance.policyVersionId ?? "",
             policyContentHash: clearance.policyContentHash ?? "",
-            confidence: clearance.confidence,
-            minimumConfidenceScore: clearance.minimumConfidenceScore,
+            confidenceBucket: clearance.confidenceBucket,
+            minimumConfidenceBucket: clearance.minimumConfidenceBucket,
             originalRequestId: clearance.requestId,
         };
     }
@@ -361,7 +361,7 @@ export class LedgixClient {
             policy_version_id: envelope.policyVersionId,
             policy_content_hash: envelope.policyContentHash,
             original_request_id: envelope.originalRequestId,
-            confidence: envelope.confidence,
+            confidence_bucket: envelope.confidenceBucket,
             reason: envelope.reason,
             human_principal: request.humanPrincipal ?? this.config.principalId ?? undefined,
             destination_uri: request.destinationUri ?? "",
@@ -389,13 +389,13 @@ export class LedgixClient {
         return ClearanceResponseSchema.parse(
             toCamelCaseKeys({
                 status: "approved",
-                approved: true,
+                decision_status: "approved",
                 requires_manual_review: false,
                 token: data.token,
                 reason: data.reason ?? envelope.reason,
                 request_id: data.request_id ?? "",
-                confidence: envelope.confidence,
-                minimum_confidence_score: envelope.minimumConfidenceScore,
+                confidence_bucket: envelope.confidenceBucket,
+                minimum_confidence_bucket: envelope.minimumConfidenceBucket,
                 policy_version_id: envelope.policyVersionId,
                 policy_content_hash: envelope.policyContentHash,
             }),
@@ -449,7 +449,7 @@ export class LedgixClient {
         }
         const clearance = resolved;
 
-        if (!clearance.approved) {
+        if ((clearance.decisionStatus === "denied")) {
             throw new ClearanceDeniedError(clearance.reason, clearance.requestId || null);
         }
 
@@ -1164,14 +1164,41 @@ async function hashNodeHex(leftHash: string, rightHash: string): Promise<string>
     return sha256Hex(concatBytes(Uint8Array.of(0x01), hexToBytes(leftHash), hexToBytes(rightHash)));
 }
 
+// Bucket migration: vault writes new ledger rows under canonical_version=2,
+// which adds confidence_bucket + decision_status to the hash schema. Older
+// canonical_version=1 rows continue to verify under the legacy schema.
+// This function matches vault/internal/ledger/ledger.go::buildEventPayload
+// bit-for-bit; if vault changes a field, change it here too.
+const BUCKET_TO_FLOAT: Record<string, number> = {
+    extra_high: 0.95,
+    high: 0.85,
+    medium: 0.6,
+    low: 0.2,
+    none: 0,
+};
+
 async function buildEventHash(entry: LedgerEntry): Promise<string> {
-    const payload = encodeDeterministicCbor({
+    // Fall back to derived values when a row is built without explicit
+    // legacy fields (the bucket migration's v1.0 SDK responses don't carry
+    // the legacy float/bool publicly anymore, but the hash still needs them).
+    const confidence =
+        typeof entry.confidence === "number"
+            ? entry.confidence
+            : entry.confidenceBucket
+              ? BUCKET_TO_FLOAT[entry.confidenceBucket] ?? 0
+              : 0;
+    const approved =
+        typeof entry.approved === "boolean"
+            ? entry.approved
+            : entry.decisionStatus === "approved" || entry.decisionStatus === "approved_pending_review";
+
+    const payload: Record<string, unknown> = {
         accepted_at: entry.acceptedAt,
         agent_id: entry.agentId,
-        approved: entry.approved,
+        approved,
         canonical_version: entry.canonicalVersion,
         citations: normalizeJSONNumbersForCbor(entry.citations),
-        confidence: entry.confidence,
+        confidence,
         event_uuid: entry.eventUuid,
         evidence_chunks: normalizeJSONNumbersForCbor(entry.evidenceChunks),
         intent_hash: entry.intentHash,
@@ -1180,8 +1207,16 @@ async function buildEventHash(entry: LedgerEntry): Promise<string> {
         request_id: entry.requestId,
         tool_args: normalizeJSONNumbersForCbor(entry.toolArgs),
         tool_name: entry.toolName,
-    });
-    return hashEventHex(payload);
+    };
+    // canonical_version=2 events embed the categorical fields in the hash
+    // so a verifier can confirm the bucket+status the vault recorded match
+    // what's on the row. v1 events must NOT include these fields or their
+    // hash schema would change.
+    if ((entry.canonicalVersion ?? 1) >= 2) {
+        payload.confidence_bucket = entry.confidenceBucket ?? "";
+        payload.decision_status = entry.decisionStatus ?? "";
+    }
+    return hashEventHex(encodeDeterministicCbor(payload));
 }
 
 function hasProtectedEventFields(entry: LedgerEntry): boolean {

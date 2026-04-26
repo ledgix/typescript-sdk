@@ -32,12 +32,12 @@ function cacheClient(overrides: Record<string, unknown> = {}): LedgixClient {
 function approvedBody(token: string, policyVersionId = "pvid-001") {
     return {
         status: "approved",
-        approved: true,
+        decisionStatus: "approved",
         token,
         reason: "Policy passed",
         request_id: "req-original-001",
-        confidence: 0.95,
-        minimum_confidence_score: 0.5,
+        confidenceBucket: "extra_high",
+        minimumConfidenceBucket: "medium",
         policy_version_id: policyVersionId,
         policy_content_hash: "sha256:abc",
     };
@@ -47,7 +47,7 @@ function mintBody(token: string, requestId = "req-mint-001") {
     return {
         request_id: requestId,
         token,
-        approved: true,
+        decisionStatus: "approved",
         reason: "Policy passed",
     };
 }
@@ -141,12 +141,12 @@ describe("LedgixClient decision cache — hit/miss", () => {
         );
 
         const r1 = await client.requestClearance(baseRequest);
-        expect(r1.approved).toBe(true);
+        expect(r1.decisionStatus).toBe("approved");
         expect(clearanceCount).toBe(1);
         expect(mintCount).toBe(0);
 
         const r2 = await client.requestClearance(baseRequest);
-        expect(r2.approved).toBe(true);
+        expect(r2.decisionStatus).toBe("approved");
         expect(clearanceCount).toBe(1);
         expect(mintCount).toBe(1);
     });
@@ -158,12 +158,12 @@ describe("LedgixClient decision cache — hit/miss", () => {
             http.post("https://vault.test/request-clearance", () => {
                 return HttpResponse.json({
                     status: "denied",
-                    approved: false,
+                    decisionStatus: "denied",
                     token: null,
                     reason: "Denied",
                     request_id: "req-deny",
-                    confidence: 0.9,
-                    minimum_confidence_score: 0.5,
+                    confidenceBucket: "high",
+                    minimumConfidenceBucket: "medium",
                 });
             }),
         );
@@ -181,12 +181,12 @@ describe("LedgixClient decision cache — hit/miss", () => {
             http.post("https://vault.test/request-clearance", () => {
                 return HttpResponse.json({
                     status: "approved",
-                    approved: true,
+                    decisionStatus: "approved",
                     token,
                     reason: "ok",
                     request_id: "req-001",
-                    confidence: 0.9,
-                    minimum_confidence_score: 0.5,
+                    confidenceBucket: "high",
+                    minimumConfidenceBucket: "medium",
                     policy_version_id: null,
                 });
             }),

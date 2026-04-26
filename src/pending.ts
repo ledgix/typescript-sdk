@@ -58,7 +58,7 @@ export class PendingApproval {
                 toCamelCaseKeys(data as Record<string, unknown>),
             );
             if (clearance.status !== "pendingReview" && clearance.status !== "processing") {
-                if (!clearance.approved) {
+                if ((clearance.decisionStatus === "denied")) {
                     throw new ClearanceDeniedError(clearance.reason, clearance.requestId || null);
                 }
                 return clearance;

@@ -5,6 +5,53 @@ All notable changes to `ledgix-ts` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0]
+
+### Breaking changes — categorical confidence buckets
+
+This release replaces the legacy decimal `confidence: number` field with five
+categorical buckets (`extra_high | high | medium | low | none`), and splits
+the overloaded `approved=true + confidence=0.00` "needs human review"
+sentinel into an explicit `decisionStatus` field
+(`approved | denied | approved_pending_review`). See
+[`docs/MIGRATION_0.4.md`](docs/MIGRATION_0.4.md) for the migration guide.
+
+> The version bump is 0.3.1 → 0.4.0 (still pre-1.0). Per SemVer §4 the
+> 0.x line is allowed to carry breaking changes on minor bumps.
+> Customers on `^0.3` will not auto-upgrade — they must explicitly
+> bump their pin to `^0.4` after reading the migration guide.
+
+#### `ClearanceResponse` schema — fields removed
+- `approved: boolean`
+- `confidence: number`
+- `minimumConfidenceScore: number`
+
+#### `ClearanceResponse` schema — fields added
+- `decisionStatus: "approved" | "denied" | "approved_pending_review"`
+- `confidenceBucket: "extra_high" | "high" | "medium" | "low" | "none"`
+- `minimumConfidenceBucket: ConfidenceBucket`
+
+#### `LedgerEntry`
+- `confidenceBucket` and `decisionStatus` added (populated for
+  canonical_version=2 events).
+- Legacy `confidence: number` and `approved: boolean` retained on the
+  schema so canonical_version=1 hash verification of historical rows
+  still works.
+
+#### Why this changed
+Same rationale as `ledgix-python` 0.4.0. The previous design overloaded
+`confidence=0.00` to mean both "extreme low confidence" (deny path) and
+"needs human review" (gated approval). Customer code doing
+`if (response.confidence < threshold) reject()` would accidentally
+reject the very review-pending decisions the platform was trying to
+surface. The bucket migration retires the cents-level decimal precision
+the model couldn't reliably produce and gives review-pending its own
+dedicated state.
+
+#### Migration in one line
+- Old: `if (response.approved && response.confidence >= 0.8) { … }`
+- New: `if (response.decisionStatus === "approved") { … }`
+
 ## [0.3.1]
 
 ### Added
