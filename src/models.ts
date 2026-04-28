@@ -145,6 +145,15 @@ export const LedgerEntrySchema = z.object({
     receiptKeyId: z.string().default(""),
     receiptSignature: z.string().default(""),
     receiptPayload: z.string().default(""),
+    // canonical_version=3 (rule engine) fields. Optional; null on
+    // legacy v1/v2 rows. Hashed into the canonical event payload only
+    // when canonicalVersion >= 3 — see buildEventHash() in client.ts.
+    ruleSetHash: z.string().nullable().optional(),
+    matchedRuleIds: z.array(z.string()).nullable().optional(),
+    evalInputsHash: z.string().nullable().optional(),
+    evalTraceHash: z.string().nullable().optional(),
+    classifierLabel: z.string().nullable().optional(),
+    classifierConfidenceBucket: ConfidenceBucketSchema.nullable().optional(),
 });
 
 export const LedgerCheckpointSchema = z.object({

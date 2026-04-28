@@ -84,12 +84,12 @@ import {
  * ```
  */
 interface DecisionEnvelope {
-    approved: boolean;
+    decisionStatus: "approved" | "denied" | "approved_pending_review";
     reason: string;
     policyVersionId: string;
     policyContentHash: string;
-    confidence: number;
-    minimumConfidenceScore: number;
+    confidenceBucket: "extra_high" | "high" | "medium" | "low" | "none";
+    minimumConfidenceBucket: "extra_high" | "high" | "medium" | "low" | "none";
     originalRequestId: string;
 }
 
@@ -1164,11 +1164,17 @@ async function hashNodeHex(leftHash: string, rightHash: string): Promise<string>
     return sha256Hex(concatBytes(Uint8Array.of(0x01), hexToBytes(leftHash), hexToBytes(rightHash)));
 }
 
-// Bucket migration: vault writes new ledger rows under canonical_version=2,
-// which adds confidence_bucket + decision_status to the hash schema. Older
-// canonical_version=1 rows continue to verify under the legacy schema.
-// This function matches vault/internal/ledger/ledger.go::buildEventPayload
-// bit-for-bit; if vault changes a field, change it here too.
+// Three canonical versions are valid on the wire today:
+//   v1 — legacy: pre-bucket schema. Hash omits all categorical fields.
+//   v2 — bucket migration: adds confidence_bucket + decision_status.
+//   v3 — rule engine: adds rule_set_hash + matched_rule_ids[] +
+//        eval_inputs_hash + eval_trace_hash + classifier_label +
+//        classifier_confidence_bucket. The eval_trace blob itself is
+//        content-addressed (only the hash is committed) so trace JSON
+//        format can evolve without invalidating events.
+//
+// Mirrors vault/internal/ledger/ledger.go::buildEventPayload bit-for-bit.
+// If vault changes a field on either side, change it here too.
 const BUCKET_TO_FLOAT: Record<string, number> = {
     extra_high: 0.95,
     high: 0.85,
@@ -1215,6 +1221,17 @@ async function buildEventHash(entry: LedgerEntry): Promise<string> {
     if ((entry.canonicalVersion ?? 1) >= 2) {
         payload.confidence_bucket = entry.confidenceBucket ?? "";
         payload.decision_status = entry.decisionStatus ?? "";
+    }
+    // canonical_version=3 binds the rule pack identity and the inputs the
+    // evaluator saw. Empty-string fallbacks match Go's empty-not-NULL
+    // convention; matched_rule_ids serialises as an array of strings.
+    if ((entry.canonicalVersion ?? 1) >= 3) {
+        payload.rule_set_hash = entry.ruleSetHash ?? "";
+        payload.matched_rule_ids = (entry.matchedRuleIds ?? []).map((id) => String(id));
+        payload.eval_inputs_hash = entry.evalInputsHash ?? "";
+        payload.eval_trace_hash = entry.evalTraceHash ?? "";
+        payload.classifier_label = entry.classifierLabel ?? "";
+        payload.classifier_confidence_bucket = entry.classifierConfidenceBucket ?? "";
     }
     return hashEventHex(encodeDeterministicCbor(payload));
 }
