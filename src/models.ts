@@ -15,6 +15,7 @@ export const ClearanceRequestSchema = z.object({
         .record(z.unknown())
         .default({})
         .describe("Arguments the agent will pass to the tool"),
+    // ship-safe-ignore AGENT_RECURSIVE_INVOCATION — Zod schema field definition, not recursive agent invocation
     agentId: z.string().default("default-agent").describe("Identifier for the calling agent"),
     sessionId: z.string().default("").describe("Session grouping identifier"),
     context: z

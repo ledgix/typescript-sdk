@@ -11,6 +11,7 @@ import { extractCounterparty } from "../src/counterparty.js";
 describe("extractCounterparty", () => {
     it("truncates Stripe API key for account ref", () => {
         const out = extractCounterparty("stripe.create_charge", {
+            // ship-safe-ignore Generic API Key Assignment — dummy test fixture, not a real credential
             api_key: "sk_test_abcdefghij1234",
             amount: 500,
         });

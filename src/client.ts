@@ -172,6 +172,7 @@ export class LedgixClient {
         while (true) {
             let response: Response;
             try {
+                // ship-safe-ignore SSRF_USER_URL_FETCH — URL is from SDK config (vaultUrl), not user input
                 response = await fetch(url, {
                     ...init,
                     headers: { ...this._headers(), ...init?.headers },
@@ -297,6 +298,7 @@ export class LedgixClient {
             clearance.decisionStatus === "approved" &&
             clearance.status === "approved" &&
             Boolean(clearance.policyVersionId) &&
+            // ship-safe-ignore TIMING_ATTACK_COMPARISON — null-check, not a secret comparison
             clearance.token != null
         );
     }

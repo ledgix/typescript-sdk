@@ -110,6 +110,7 @@ function _findDefaultManifest(): string {
     }
     throw new Error(
         "No Ledgix manifest found in the current directory. " +
+        // ship-safe-ignore SQL_INJECTION_TEMPLATE_LITERAL — error message string, not a SQL query
         `Create one of: ${MANIFEST_FILENAMES.join(", ")}`,
     );
 }

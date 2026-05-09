@@ -24,6 +24,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
  *   if (!verifyWebhook(req.body, req.headers["x-ledgix-signature"] as string, SECRET)) {
  *     return res.status(403).send("Forbidden");
  *   }
+ *   // ship-safe-ignore WEBHOOK_RAW_BODY_NOT_USED — this is a doc comment example, not executed code
  *   const event = JSON.parse(req.body.toString());
  *   // ...
  * });

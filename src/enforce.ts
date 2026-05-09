@@ -118,6 +118,7 @@ export function autoInstrument<T extends Record<string, unknown>>(
     fns: T,
     manifest?: string | ManifestSchema | Manifest,
 ): T {
+    // ship-safe-ignore AGENT_MANIFEST_NO_SIGNATURE — manifest is loaded from local filesystem, not downloaded
     _manifest = loadManifest(manifest);
 
     const result: Record<string, unknown> = {};

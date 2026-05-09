@@ -39,6 +39,7 @@ describe("manifest helpers", () => {
         );
         process.chdir(tempDir);
 
+        // ship-safe-ignore AGENT_MANIFEST_NO_SIGNATURE — unit test loading local fixture, not a production manifest load
         const manifest = loadManifest();
 
         expect(manifest.source.endsWith("/ledgix.json")).toBe(true);
@@ -48,6 +49,7 @@ describe("manifest helpers", () => {
     it("raises a helpful error when no default manifest exists", () => {
         process.chdir(tempDir);
 
+        // ship-safe-ignore AGENT_MANIFEST_NO_SIGNATURE — unit test verifying error path, no manifest is loaded
         expect(() => loadManifest()).toThrow(/No Ledgix manifest found/i);
     });
 
