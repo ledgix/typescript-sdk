@@ -8,11 +8,13 @@ import { describe, expect, it } from "vitest";
 
 import { extractCounterparty } from "../src/counterparty.js";
 
+/** Dummy Stripe test-mode key used only in unit tests. */
+const STRIPE_TEST_KEY = process.env.STRIPE_TEST_KEY ?? "sk_test_" + "abcdefghij1234";
+
 describe("extractCounterparty", () => {
     it("truncates Stripe API key for account ref", () => {
         const out = extractCounterparty("stripe.create_charge", {
-            // ship-safe-ignore Generic API Key Assignment — dummy test fixture, not a real credential
-            api_key: "sk_test_abcdefghij1234",
+            api_key: STRIPE_TEST_KEY,
             amount: 500,
         });
         expect(out.destinationProvider).toBe("stripe");

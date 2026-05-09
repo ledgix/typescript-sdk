@@ -1,49 +1,46 @@
 # Ship Safe ignore rules for typescript-sdk
 # Published as ledgix-ts on npm. Agent-agnostic SDK shim.
 
-# --- Error messages ---
-
+# ── False-positive: SQL / SSRF ───────────────────────────────────────────────
 # Template literals in manifest.ts build error message strings, not SQL.
 SQL_INJECTION_TEMPLATE_LITERAL
 
-# --- SDK client ---
-
 # vaultUrl comes from SDK config (constructor arg), not user input.
+# URL origin is now validated against the configured Vault before every fetch.
 SSRF_USER_URL_FETCH
 
-# Null checks (=== null) are presence checks, not secret comparisons.
+# ── Null-check, not secret comparison ────────────────────────────────────────
+# Boolean(clearance.token) is a presence check, not a secret comparison.
 TIMING_ATTACK_COMPARISON
 
-# --- Test fixtures ---
-
-# Test files use sk_test_... as a dummy API key.
+# ── Test fixtures ────────────────────────────────────────────────────────────
+# Test files use sk_test_... as a dummy API key built from a constant.
 Generic API Key Assignment
 
 # Unit tests load local fixture files or verify error paths.
 # No production manifests are loaded without signature verification.
 AGENT_MANIFEST_NO_SIGNATURE
 
-# --- Data model ---
-
+# ── Data model ───────────────────────────────────────────────────────────────
 # Zod schema field definitions describing agent metadata, not recursive invocation.
 AGENT_RECURSIVE_INVOCATION
 
-# --- JSDoc ---
-
-# webhook.ts JSDoc comment mentions rawBody as an example, not executed code.
+# ── JSDoc example ────────────────────────────────────────────────────────────
+# webhook.ts JSDoc comment contains a usage example, not executed code.
 WEBHOOK_RAW_BODY_NOT_USED
 
-# --- Supply chain ---
-
-# Scanner flags inline string "eval" in test descriptions/variable names.
+# ── Supply chain ─────────────────────────────────────────────────────────────
+# msw is a dev-only mock server; its postinstall is a well-known initializer.
 BEHAVIORAL_INLINE_EVAL
 
-# @anthropic-ai, @ai-sdk, etc. are official public npm scopes.
+# @vitest, @ai-sdk, @anthropic-ai, @langchain are official public npm scopes.
 DEPCONF_NO_SCOPE_REGISTRY
 
-# --- Git history ---
+# ── Git history ──────────────────────────────────────────────────────────────
 # No real secrets were ever committed; placeholder values only.
+# package-lock.json integrity hashes are not credentials.
 GIT_HISTORY_SECRET
 
-# --- General ---
+# ── Environment ──────────────────────────────────────────────────────────────
+# User-level MCP config in ~/.cursor/mcp.json is outside project control.
 MCP_SHADOW_CONFIG

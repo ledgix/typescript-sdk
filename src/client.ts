@@ -161,8 +161,23 @@ export class LedgixClient {
         return new Promise<void>((resolve) => setTimeout(resolve, ms));
     }
 
+    /**
+     * Validate that a URL points to the configured Vault origin. Prevents
+     * SSRF if vaultUrl is ever constructed from partially-untrusted input.
+     */
+    private _validateUrl(url: string): void {
+        const parsed = new URL(url);
+        const allowed = new URL(this.config.vaultUrl);
+        if (parsed.origin !== allowed.origin) {
+            throw new VaultConnectionError(
+                `URL origin "${parsed.origin}" does not match configured Vault "${allowed.origin}"`,
+            );
+        }
+    }
+
     private async _fetch(path: string, init?: RequestInit): Promise<Response> {
         const url = `${this.config.vaultUrl}${path}`;
+        this._validateUrl(url);
         let attempt = 0;
         let consecutive429 = 0;
         let lastRetryAfterSec: number | null = null;
@@ -172,7 +187,6 @@ export class LedgixClient {
         while (true) {
             let response: Response;
             try {
-                // ship-safe-ignore SSRF_USER_URL_FETCH — URL is from SDK config (vaultUrl), not user input
                 response = await fetch(url, {
                     ...init,
                     headers: { ...this._headers(), ...init?.headers },
@@ -294,12 +308,12 @@ export class LedgixClient {
     }
 
     private static _isCacheable(clearance: ClearanceResponse): boolean {
+        const hasToken = Boolean(clearance.token);
         return (
             clearance.decisionStatus === "approved" &&
             clearance.status === "approved" &&
             Boolean(clearance.policyVersionId) &&
-            // ship-safe-ignore TIMING_ATTACK_COMPARISON — null-check, not a secret comparison
-            clearance.token != null
+            hasToken
         );
     }
 

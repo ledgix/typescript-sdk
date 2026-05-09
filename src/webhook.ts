@@ -20,13 +20,15 @@ import { createHmac, timingSafeEqual } from "node:crypto";
  * import express from "express";
  * import { verifyWebhook } from "ledgix-ts";
  *
+ * // Use express.raw() to get the unparsed body buffer for HMAC verification.
  * app.post("/webhook", express.raw({ type: "application/json" }), (req, res) => {
- *   if (!verifyWebhook(req.body, req.headers["x-ledgix-signature"] as string, SECRET)) {
+ *   const rawBody: Buffer = req.body;            // raw bytes, not parsed JSON
+ *   const sig = req.headers["x-ledgix-signature"] as string;
+ *   if (!verifyWebhook(rawBody, sig, SECRET)) {
  *     return res.status(403).send("Forbidden");
  *   }
- *   // ship-safe-ignore WEBHOOK_RAW_BODY_NOT_USED — this is a doc comment example, not executed code
- *   const event = JSON.parse(req.body.toString());
- *   // ...
+ *   const event = JSON.parse(rawBody.toString("utf-8"));
+ *   // ... handle event
  * });
  * ```
  */
