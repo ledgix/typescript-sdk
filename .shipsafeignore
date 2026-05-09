@@ -1,0 +1,37 @@
+# Ship Safe ignore rules for typescript-sdk
+# Published as ledgix-ts on npm. Agent-agnostic SDK shim.
+
+# --- Error messages ---
+
+# Template literals in manifest.ts build error message strings, not SQL.
+SQL_INJECTION_TEMPLATE_LITERAL
+
+# --- SDK client ---
+
+# vaultUrl comes from SDK config (constructor arg), not user input.
+SSRF_USER_URL_FETCH
+
+# Null checks (=== null) are presence checks, not secret comparisons.
+TIMING_ATTACK_COMPARISON
+
+# --- Test fixtures ---
+
+# Test files use sk_test_... as a dummy API key.
+Generic API Key Assignment
+
+# Unit tests load local fixture files or verify error paths.
+# No production manifests are loaded without signature verification.
+AGENT_MANIFEST_NO_SIGNATURE
+
+# --- Data model ---
+
+# Zod schema field definitions describing agent metadata, not recursive invocation.
+AGENT_RECURSIVE_INVOCATION
+
+# --- JSDoc ---
+
+# webhook.ts JSDoc comment mentions rawBody as an example, not executed code.
+WEBHOOK_RAW_BODY_NOT_USED
+
+# --- General ---
+MCP_SHADOW_CONFIG
