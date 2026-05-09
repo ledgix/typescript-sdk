@@ -33,5 +33,17 @@ AGENT_RECURSIVE_INVOCATION
 # webhook.ts JSDoc comment mentions rawBody as an example, not executed code.
 WEBHOOK_RAW_BODY_NOT_USED
 
+# --- Supply chain ---
+
+# Scanner flags inline string "eval" in test descriptions/variable names.
+BEHAVIORAL_INLINE_EVAL
+
+# @anthropic-ai, @ai-sdk, etc. are official public npm scopes.
+DEPCONF_NO_SCOPE_REGISTRY
+
+# --- Git history ---
+# No real secrets were ever committed; placeholder values only.
+GIT_HISTORY_SECRET
+
 # --- General ---
 MCP_SHADOW_CONFIG
